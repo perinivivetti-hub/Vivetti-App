@@ -109,7 +109,7 @@ def modal_gestione(id_p, testata):
 
 # --- 3. VISTA ARCHIVIO ---
 def show_archivio():
-    st.title("📂 Archivio Preventivi")
+    st.subheader("📂 Archivio Preventivi")
     supabase = get_supabase_client()
     user_data = st.session_state.get('user_info', {})
     agente_id = str(user_data.get("agente_corrispondente"))

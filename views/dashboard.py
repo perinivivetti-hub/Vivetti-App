@@ -65,7 +65,7 @@ def show_dashboard():
     df_base["ImportoNettoRiga"] = pd.to_numeric(df_base["ImportoNettoRiga"], errors='coerce').fillna(0)
     df_base["IdAgenteDoc"] = df_base["IdAgenteDoc"].astype(str)
 
-    st.title("📊 Performance")
+    st.subheader("📊 Performance")
     
     # --- SEZIONE FILTRI ---
     with st.container(border=True):
