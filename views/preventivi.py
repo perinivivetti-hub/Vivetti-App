@@ -154,7 +154,7 @@ def show_preventivi():
     df_clienti, df_listino = get_data_for_form()
     user_data = st.session_state.get('user_info', {})
     
-    st.header("📝 Nuovo Preventivo")
+    st.subheader("📝 Nuovo Preventivo")
 
     with st.expander("👤 Anagrafica e Dati Consegna", expanded=True):
         clienti_filtrati = df_clienti
