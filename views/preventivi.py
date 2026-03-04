@@ -139,7 +139,7 @@ def salva_preventivo_db(info_testata, righe):
 
 # --- 5. INTERFACCIA ---
 def show_preventivi():
-    st.title("📝 Nuovo Preventivo")
+    st.subheader("📝 Nuovo Preventivo")
     if 'search_counter' not in st.session_state: st.session_state.search_counter = 0
     if 'righe_preventivo' not in st.session_state: st.session_state.righe_preventivo = []
     
@@ -250,34 +250,64 @@ def show_preventivi():
                         st.session_state.search_counter += 1; st.rerun()
             else: st.warning("Nessun articolo trovato.")
 
+    # --- SEZIONE FINALE: TOTALI E AZIONI ---
     if st.session_state.righe_preventivo:
         st.divider()
-        st.metric("TOTALE NETTO PREVENTIVO", f"€ {tot_netto:,.2f}")
-        note_gen = st.text_area("Note finali per il cliente")
+        
+        # Layout Totale e Note
+        col_note, col_metrica = st.columns([2, 1])
+        with col_note:
+            note_gen = st.text_area("Note finali per il cliente", placeholder="Esempio: Consegna inclusa, Validità 30gg...")
+        with col_metrica:
+            st.metric("TOTALE NETTO", f"€ {tot_netto:,.2f}")
+        
         num_prev = f"PREV-{datetime.now().strftime('%y%m%d-%H%M')}"
         
         testata = {
             "id_cliente": cliente_sel['id'] if cliente_sel else None,
             "ragione_sociale_cliente": cliente_sel['ragione_sociale'] if cliente_sel else "",
             "id_agente": str(user_data.get("agente_corrispondente")),
-            "totale_lordo": tot_lordo, "totale_netto": tot_netto, "note_generali": note_gen,
-            "data_consegna": str(data_cons) if data_cons else None, "riferimento": rif_ordine,
+            "totale_lordo": tot_lordo, 
+            "totale_netto": tot_netto, 
+            "note_generali": note_gen,
+            "data_consegna": str(data_cons) if data_cons else None, 
+            "riferimento": rif_ordine,
             "numero_preventivo": num_prev
         }
-        
-        c_db, c_pdf = st.columns(2)
-        if c_db.button("💾 SALVA NEL DATABASE", type="primary", use_container_width=True):
-            if not cliente_sel: st.error("Seleziona un cliente!")
-            else:
-                ok, res_id = salva_preventivo_db(testata, st.session_state.righe_preventivo)
-                if ok:
-                    st.toast(f"✅ Salvato correttamente!", icon='🎉')
-                    time.sleep(1.5); st.session_state.righe_preventivo = []; st.rerun()
-                else: st.error(f"Errore: {res_id}")
-        
-        if cliente_sel:
-            pdf_b = genera_pdf_ordine(cliente_sel, testata, st.session_state.righe_preventivo)
-            st.download_button("📄 SCARICA PDF", data=pdf_b, file_name=f"{num_prev}.pdf", mime="application/pdf", use_container_width=True)
 
+        # --- TASTI AZIONE PROFESSIONALI (Allineati a destra) ---
+        # Usiamo 5 colonne: le prime 2 sono vuote per spingere i tasti a destra
+        # Le altre 3 ospitano i pulsanti (uno per il PDF, uno per il Database)
+        c_spacer1, c_spacer2, c_spacer3, c_pdf, c_db = st.columns([1, 1, 1, 1.2, 1.5])
+
+        with c_pdf:
+            if cliente_sel:
+                try:
+                    pdf_b = genera_pdf_ordine(cliente_sel, testata, st.session_state.righe_preventivo)
+                    st.download_button(
+                        label="📄 PDF", 
+                        data=pdf_b, 
+                        file_name=f"{num_prev}.pdf", 
+                        mime="application/pdf", 
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error("Errore PDF")
+
+        with c_db:
+            if c_db.button("💾 SALVA ORDINE", type="primary", use_container_width=True):
+                if not cliente_sel:
+                    st.error("Seleziona un cliente!")
+                else:
+                    ok, res_id = salva_preventivo_db(testata, st.session_state.righe_preventivo)
+                    if ok:
+                        st.toast(f"✅ Preventivo {num_prev} salvato!", icon='🎉')
+                        time.sleep(1.5)
+                        st.session_state.righe_preventivo = []
+                        st.rerun()
+                    else:
+                        st.error(f"Errore: {res_id}")
+
+# Fine del file
 if __name__ == "__main__":
     show_preventivi()
