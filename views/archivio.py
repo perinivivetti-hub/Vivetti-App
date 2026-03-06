@@ -7,7 +7,6 @@ import os
 import time
 
 # Importiamo le funzioni necessarie dal file preventivi.py
-# Nota: Assicurati che il percorso sia corretto (es. from views.preventivi se è in una sottocartella)
 from views.preventivi import genera_pdf_ordine, format_sconti_string, calcola_netto, get_data_for_form
 
 # --- 1. CONNESSIONE ---
@@ -53,6 +52,7 @@ def modal_gestione(id_p, testata):
             omaggio = c2.toggle("Omaggio", value=r.get('is_sconto_merce', False), key=f"sm_{idx}_{id_p}")
 
             # Logica Metodo Prezzo (Sconti o Netto Diretto)
+            # Controllo se ha sconti per impostare il default del radio
             ha_sconti = any([float(r.get('sconto_1', 0)) > 0, float(r.get('sconto_2', 0)) > 0, float(r.get('sconto_3', 0)) > 0])
             metodo_init = "Sconti %" if ha_sconti else "Netto Fisso €"
             
@@ -142,7 +142,7 @@ def modal_gestione(id_p, testata):
             
             per_db = []
             for item in st.session_state[session_key]:
-                # Pulizia per evitare errori di vincoli DB (chiavi primarie vecchie)
+                # Pulizia per evitare errori di vincoli DB (rimuoviamo ID vecchi)
                 item_clean = {k: v for k, v in item.items() if k not in ['id', 'created_at']}
                 item_clean['id_preventivo'] = id_p
                 per_db.append(item_clean)
@@ -156,7 +156,8 @@ def modal_gestione(id_p, testata):
             st.rerun()
 
     if col_close.button("Annulla", use_container_width=True):
-        del st.session_state[session_key]
+        if session_key in st.session_state:
+            del st.session_state[session_key]
         st.rerun()
 
 # --- 3. VISTA ARCHIVIO PRINCIPALE ---
@@ -191,11 +192,16 @@ def show_archivio():
         data_f = datetime.fromisoformat(prev['created_at']).strftime("%d/%m/%Y")
         righe_db = prev.get('preventivi_righe', [])
         
+        # FIX ERRORE: Gestione NoneType per totale_netto
+        valore_totale = prev.get('totale_netto') if prev.get('totale_netto') is not None else 0.0
+        
         with st.container(border=True):
             col_info, col_prezzo = st.columns([3, 1])
             col_info.markdown(f"**{prev['ragione_sociale_cliente']}**")
             col_info.caption(f"📅 {data_f} | Rif: {prev.get('riferimento') or '-'}")
-            col_prezzo.markdown(f"<h3 style='margin:0; text-align:right; color:#1f77b4;'>€ {prev['totale_netto']:,.2f}</h3>", unsafe_allow_html=True)
+            
+            # Formattazione sicura
+            col_prezzo.markdown(f"<h3 style='margin:0; text-align:right; color:#1f77b4;'>€ {valore_totale:,.2f}</h3>", unsafe_allow_html=True)
             
             # Sintesi articoli
             art_list = ", ".join([f"{r['quantita']}x {r['codice_articolo']}" for r in righe_db[:2]])
@@ -208,13 +214,13 @@ def show_archivio():
             if btn_edit.button("✏️ Gestisci", key=f"main_edit_{prev['id']}", use_container_width=True):
                 modal_gestione(prev['id'], prev)
 
-            # Generazione PDF al volo per download
+            # Generazione PDF
             try:
                 righe_pdf = [{
                     "CODICE": r['codice_articolo'], "DESCRIZIONE": r['descrizione'], "QTA": r['quantita'],
                     "PREZZO_LORDO": r['prezzo_lordo_unitario'], "PREZZO_NETTO": r['prezzo_netto_unitario'],
                     "S1": r['sconto_1'], "S2": r['sconto_2'], "S3": r['sconto_3'],
-                    "SCONTO_MERCE": r['is_sconto_merce'], "NOTA": r['nota_riga']
+                    "SCONTO_MERCE": r['is_sconto_merce'], "NOTA": r.get('nota_riga', "")
                 } for r in righe_db]
 
                 pdf_file = genera_pdf_ordine({"ragione_sociale": prev['ragione_sociale_cliente']}, prev, righe_pdf)
@@ -224,7 +230,7 @@ def show_archivio():
                     file_name=f"Prev_{prev['numero_preventivo']}.pdf",
                     mime="application/pdf", key=f"pdf_down_{prev['id']}", use_container_width=True
                 )
-            except:
+            except Exception as e:
                 btn_pdf.error("Errore PDF")
 
 if __name__ == "__main__":

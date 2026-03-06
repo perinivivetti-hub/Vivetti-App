@@ -86,34 +86,46 @@ def genera_pdf_ordine(cliente, testata, righe):
     pdf.cell(0, 6, f"DATA: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='R')
     pdf.ln(8)
     
+    # --- INTESTAZIONE TABELLA (Misure richieste: 35, 55, 10, 20, 20, 20, 20) ---
     pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
-    pdf.cell(25, 8, "CODICE", 1, 0, 'C', True)
-    pdf.cell(65, 8, "DESCRIZIONE", 1, 0, 'L', True)
+    pdf.cell(35, 8, "CODICE", 1, 0, 'C', True)
+    pdf.cell(55, 8, "DESCRIZIONE", 1, 0, 'L', True)
     pdf.cell(10, 8, "Q.TA", 1, 0, 'C', True)
-    pdf.cell(20, 8, "LISTINO U.", 1, 0, 'R', True)
-    pdf.cell(18, 8, "SCONTI", 1, 0, 'C', True)
-    pdf.cell(22, 8, "NETTO U.", 1, 0, 'R', True)
-    pdf.cell(30, 8, "TOTALE", 1, 1, 'R', True)
+    pdf.cell(20, 8, "PREZZO U.", 1, 0, 'R', True)
+    pdf.cell(20, 8, "SCONTI", 1, 0, 'C', True)
+    pdf.cell(20, 8, "NETTO U.", 1, 0, 'R', True)
+    pdf.cell(20, 8, "TOTALE", 1, 1, 'R', True)
     
     pdf.set_font("Arial", '', 8)
     for r in righe:
         p_l = float(r['PREZZO_LORDO'])
         p_u = 0.0 if r['SCONTO_MERCE'] else float(r['PREZZO_NETTO'])
         s_str = "OMAGGIO" if r['SCONTO_MERCE'] else format_sconti_string(r['S1'], r['S2'], r['S3'])
+        
         y_before = pdf.get_y()
-        pdf.set_xy(35, y_before)
+        
+        # 1. Scriviamo la DESCRIZIONE (multi_cell) spostata dopo il codice (10 margine + 35 codice = 45)
+        pdf.set_xy(45, y_before)
         desc_testo = r['DESCRIZIONE']
         if r.get('NOTA'): desc_testo += f"\nNote: {r['NOTA']}"
-        pdf.multi_cell(65, 5, desc_testo, border=1, align='L')
+        pdf.multi_cell(55, 5, desc_testo, border=1, align='L')
+        
         h = max(pdf.get_y() - y_before, 8)
+        
+        # 2. Scriviamo il CODICE nella sua cella (35mm)
         pdf.set_xy(10, y_before)
-        pdf.cell(25, h, r['CODICE'], border=1, align='C')
+        # Se il codice è molto lungo riduciamo il font per farlo stare nei 35mm
+        if len(str(r['CODICE'])) > 16: pdf.set_font("Arial", '', 7)
+        pdf.cell(35, h, r['CODICE'], border=1, align='C')
+        pdf.set_font("Arial", '', 8)
+        
+        # 3. Scriviamo le altre colonne (partendo da 100mm: 10+35+55)
         pdf.set_xy(100, y_before)
         pdf.cell(10, h, str(r['QTA']), border=1, align='C')
         pdf.cell(20, h, f"{p_l:,.2f}", border=1, align='R')
-        pdf.cell(18, h, s_str, border=1, align='C')
-        pdf.cell(22, h, f"{p_u:,.2f}", border=1, align='R')
-        pdf.cell(30, h, f"{(p_u * r['QTA']):,.2f}", border=1, ln=1, align='R')
+        pdf.cell(20, h, s_str, border=1, align='C')
+        pdf.cell(20, h, f"{p_u:,.2f}", border=1, align='R')
+        pdf.cell(20, h, f"{(p_u * r['QTA']):,.2f}", border=1, ln=1, align='R')
 
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 12)
@@ -200,7 +212,6 @@ def show_preventivi():
             if b2.button("🗑️ Rimuovi", key=f"del_{idx}", use_container_width=True):
                 st.session_state.righe_preventivo.pop(idx); st.rerun()
 
-    # --- AGGIUNGI ARTICOLO CON DOPPIA MODALITA PREZZO ---
     with st.expander("➕ Aggiungi Articolo dal Listino", expanded=not bool(st.session_state.righe_preventivo)):
         search_term = st.text_input("Cerca per Codice o Descrizione (min. 4 caratteri):", 
                                    key=f"live_search_{st.session_state.search_counter}")
@@ -223,7 +234,6 @@ def show_preventivi():
                     p_l = float(sel_item['PREZZO'])
                     q_add = st.number_input("Quantità", min_value=1, value=1, key=f"q_{st.session_state.search_counter}")
                     
-                    # SELETTORE MODALITA PREZZO
                     modo = st.radio("Metodo inserimento prezzo", ["Sconti %", "Netto € Manuale"], horizontal=True, key=f"modo_{st.session_state.search_counter}")
                     
                     if modo == "Sconti %":
@@ -250,11 +260,8 @@ def show_preventivi():
                         st.session_state.search_counter += 1; st.rerun()
             else: st.warning("Nessun articolo trovato.")
 
-    # --- SEZIONE FINALE: TOTALI E AZIONI ---
     if st.session_state.righe_preventivo:
         st.divider()
-        
-        # Layout Totale e Note
         col_note, col_metrica = st.columns([2, 1])
         with col_note:
             note_gen = st.text_area("Note finali per il cliente", placeholder="Esempio: Consegna inclusa, Validità 30gg...")
@@ -262,7 +269,6 @@ def show_preventivi():
             st.metric("TOTALE NETTO", f"€ {tot_netto:,.2f}")
         
         num_prev = f"PREV-{datetime.now().strftime('%y%m%d-%H%M')}"
-        
         testata = {
             "id_cliente": cliente_sel['id'] if cliente_sel else None,
             "ragione_sociale_cliente": cliente_sel['ragione_sociale'] if cliente_sel else "",
@@ -275,9 +281,6 @@ def show_preventivi():
             "numero_preventivo": num_prev
         }
 
-        # --- TASTI AZIONE PROFESSIONALI (Allineati a destra) ---
-        # Usiamo 5 colonne: le prime 2 sono vuote per spingere i tasti a destra
-        # Le altre 3 ospitano i pulsanti (uno per il PDF, uno per il Database)
         c_spacer1, c_spacer2, c_spacer3, c_pdf, c_db = st.columns([1, 1, 1, 1.2, 1.5])
 
         with c_pdf:
@@ -308,6 +311,5 @@ def show_preventivi():
                     else:
                         st.error(f"Errore: {res_id}")
 
-# Fine del file
 if __name__ == "__main__":
     show_preventivi()
