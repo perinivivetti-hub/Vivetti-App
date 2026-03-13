@@ -36,8 +36,11 @@ def get_supabase_client():
 @st.cache_data(ttl=600)
 def get_data_for_form():
     supabase = get_supabase_client()
+    
+    # Recupero Clienti
     clienti_res = supabase.table("rubrica_clienti").select("*").execute()
     
+    # Recupero Listino con paginazione
     all_listino_rows = []
     step, start = 1000, 0
     while True:
@@ -73,7 +76,7 @@ def format_sconti_string(s1, s2, s3):
 def calcola_netto(listino, s1, s2, s3):
     return float(listino) * (1 - float(s1 or 0)/100) * (1 - float(s2 or 0)/100) * (1 - float(s3 or 0)/100)
 
-# --- 3. GENERAZIONE PDF (CORRETTA PER LE NOTE) ---
+# --- 3. GENERAZIONE PDF ---
 def genera_pdf_ordine(cliente, testata, righe):
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
@@ -85,23 +88,33 @@ def genera_pdf_ordine(cliente, testata, righe):
     pdf.ln(18); pdf.set_font("Arial", '', 10)
     pdf.cell(0, 6, f"SPETT.LE CLIENTE: {cliente['ragione_sociale']}", ln=True)
     pdf.cell(100, 6, f"RIFERIMENTO: {testata['riferimento'] if testata['riferimento'] else '-'}", ln=False)
-    pdf.cell(0, 6, f"DATA: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='R')
-    pdf.ln(8); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
+    pdf.cell(0, 6, f"DATA EMISSIONE: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='R')
+    # --- AGGIUNTA DATA CONSEGNA ---
+    consegna_str = "-"
+    if testata.get('data_consegna'):
+        try:
+            # Trasformiamo la data da YYYY-MM-DD a DD/MM/YYYY per il PDF
+            consegna_str = datetime.strptime(testata['data_consegna'], '%Y-%m-%d').strftime('%d/%m/%Y')
+        except:
+            consegna_str = testata['data_consegna']
+            
+    pdf.set_font("Arial", 'B', 10) # Bolding per farla risaltare
+    pdf.cell(100, 6, f"CONSEGNA PREVISTA: {consegna_str}", ln=True)
+    pdf.set_font("Arial", '', 10) # Reset font
     
+    pdf.ln(8); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
+        
     cols = [("CODICE", 35), ("DESCRIZIONE", 55), ("Q.TA", 10), ("PREZZO U.", 20), ("SCONTI", 20), ("NETTO U.", 20), ("TOTALE", 20)]
     for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', True)
     pdf.ln(); pdf.set_font("Arial", '', 8)
 
     for r in righe:
         if r.get('tipo') == 'NOTA_TESTO':
-            # Riga Nota: pulita, senza codice, a tutta larghezza
             pdf.set_font("Arial", 'B', 9)
             pdf.set_fill_color(245, 245, 245)
-            # Stampiamo solo il testo digitato, occupando l'intera riga della tabella (180mm)
             pdf.multi_cell(180, 8, r['DESCRIZIONE'].upper(), border=1, align='L', fill=True)
             pdf.set_font("Arial", '', 8)
         else:
-            # Riga Articolo standard
             p_l = float(r['PREZZO_LORDO']); p_u = 0.0 if r['SCONTO_MERCE'] else float(r['PREZZO_NETTO'])
             s_str = "OMAGGIO" if r['SCONTO_MERCE'] else format_sconti_string(r['S1'], r['S2'], r['S3'])
             
@@ -109,12 +122,10 @@ def genera_pdf_ordine(cliente, testata, righe):
             desc_testo = r['DESCRIZIONE']
             if r.get('NOTA'): desc_testo += f"\nNote: {r['NOTA']}"
             
-            # Calcolo altezza dinamica per la descrizione
             pdf.set_xy(45, y_before)
             pdf.multi_cell(55, 5, desc_testo, border=0, align='L')
             h = max(pdf.get_y() - y_before, 8)
             
-            # Disegno celle
             pdf.set_xy(10, y_before)
             pdf.cell(35, h, str(r['CODICE']), border=1, align='C')
             pdf.set_xy(45, y_before)
@@ -151,7 +162,7 @@ def salva_preventivo_db(info_testata, righe):
         return True, id_prev
     except Exception as e: return False, str(e)
 
-# --- 5. INTERFACCIA ---
+# --- 5. INTERFACCIA PRINCIPALE ---
 def show_preventivi():
     if 'righe_preventivo' not in st.session_state: st.session_state.righe_preventivo = []
     if 'temp_item' not in st.session_state: st.session_state.temp_item = None
@@ -162,20 +173,29 @@ def show_preventivi():
 
     st.subheader("📝 Nuovo Preventivo")
 
-    with st.expander("👤 Anagrafica", expanded=not bool(st.session_state.righe_preventivo)):
-        clienti_filtrati = df_clienti
+    # --- RICERCA CLIENTI ---
+    def search_clients(search_term: str):
+        if not search_term or len(search_term) < 2: return []
+        mask = (df_clienti['ragione_sociale'].str.contains(search_term, case=False, na=False))
         if user_data.get("ruolo") == "agente":
             ag_id = str(user_data.get("agente_corrispondente"))
-            clienti_filtrati = df_clienti[df_clienti["id_agente"].astype(str) == ag_id]
-        cliente_sel = st.selectbox("Cliente", options=clienti_filtrati.to_dict('records'), 
-                                    format_func=lambda x: f"{x['ragione_sociale']} ({x.get('citta', '')})", index=None)
+            mask = mask & (df_clienti["id_agente"].astype(str) == ag_id)
+        results = df_clienti[mask].head(10)
+        return [(f"{row['ragione_sociale']} ({row.get('citta', '')})", row.to_dict()) for _, row in results.iterrows()]
+
+    with st.expander("👤 Anagrafica", expanded=not bool(st.session_state.righe_preventivo)):
+        cliente_sel = st_searchbox(search_clients, placeholder="🔍 Cerca cliente...", key="search_cliente_prev")
+        
         c1, c2 = st.columns(2)
         data_cons = c1.date_input("Data consegna", value=None, format="DD/MM/YYYY")
         rif_ordine = c2.text_input("Riferimento", placeholder="Cantiere...")
+        
+        if cliente_sel:
+            st.success(f"Cliente: **{cliente_sel['ragione_sociale']}**")
 
     st.divider()
 
-    # --- RICERCA E AZIONI ---
+    # --- RICERCA ARTICOLI ---
     st.subheader("🔍 Ricerca Articoli")
     
     def search_articles(search_term: str):
@@ -189,7 +209,7 @@ def show_preventivi():
     
     with col_search:
         selected_article = st_searchbox(search_articles, placeholder="Cerca codice o descrizione...", 
-                                        key=f"search_widget_{st.session_state.search_key}", clear_on_submit=True)
+                                        key=f"search_art_{st.session_state.search_key}", clear_on_submit=True)
 
     with col_m:
         if st.button("➕ Manuale", use_container_width=True):
@@ -204,7 +224,7 @@ def show_preventivi():
     if selected_article:
         st.session_state.temp_item = selected_article
 
-    # --- SCHEDA CONFIGURAZIONE ---
+    # --- SCHEDA CONFIGURAZIONE RIGA ---
     if st.session_state.temp_item:
         item = st.session_state.temp_item
         with st.container():
@@ -212,7 +232,7 @@ def show_preventivi():
             
             if item.get("tipo") == "NOTA_TESTO":
                 st.markdown("#### 🗒️ Inserisci Nota Descrittiva")
-                testo_nota = st.text_area("Testo della nota (apparirà a tutta larghezza)", value=item["DESCRIZIONE"])
+                testo_nota = st.text_area("Testo della nota", value=item["DESCRIZIONE"])
                 c1, c2 = st.columns(2)
                 if c1.button("💾 AGGIUNGI NOTA", type="primary", use_container_width=True):
                     st.session_state.righe_preventivo.append({"tipo": "NOTA_TESTO", "DESCRIZIONE": testo_nota})
@@ -228,11 +248,10 @@ def show_preventivi():
                     item["CODICE"] = c_m1.text_input("Codice", value=item["CODICE"])
                     item["DESCRIZIONE"] = c_m2.text_input("Descrizione", value=item["DESCRIZIONE"])
                 else:
-                    st.write(f"**Codice:** `{item['CODICE']}`")
-                    st.write(f"**Descrizione:** {item['DESCRIZIONE']}")
+                    st.write(f"**Codice:** `{item['CODICE']}` | **Descrizione:** {item['DESCRIZIONE']}")
                 
                 col_p1, col_p2 = st.columns(2)
-                pl = col_p1.number_input("Prezzo Unitario (€)", value=float(item.get('PREZZO', item.get('PREZZO_LORDO', 0.0))), step=0.01, format="%.2f")
+                pl = col_p1.number_input("Prezzo Unitario (€)", value=float(item.get('PREZZO', item.get('PREZZO_LORDO', 0.0))), format="%.2f")
                 qta_val = col_p2.number_input("Q.tà", min_value=1, value=int(item.get('QTA', 1)))
                 
                 metodo = st.radio("Metodo Prezzo:", ["Sconti %", "Netto Fisso"], horizontal=True)
@@ -243,7 +262,7 @@ def show_preventivi():
                     s3 = cs3.number_input("S3 %", value=float(item.get('SCONTO3', item.get('S3', 0))))
                     pn = calcola_netto(pl, s1, s2, s3)
                 else:
-                    pn = st.number_input("Netto Unitario (€)", value=float(item.get('PREZZO_NETTO', pl)), step=0.01, format="%.2f")
+                    pn = st.number_input("Netto Unitario (€)", value=float(item.get('PREZZO_NETTO', pl)), format="%.2f")
                     s1, s2, s3 = 0, 0, 0
                 
                 nota_r = st.text_input("Nota riga", value=item.get('NOTA', ""))
@@ -295,14 +314,22 @@ def show_preventivi():
         cm.metric("TOTALE NETTO", f"€ {tot_n:,.2f}")
         
         num_prev = f"PREV-{datetime.now().strftime('%y%m%d-%H%M')}"
-        testata = {"id_cliente": cliente_sel['id'] if cliente_sel else None, "ragione_sociale_cliente": cliente_sel['ragione_sociale'] if cliente_sel else "", "id_agente": str(user_data.get("agente_corrispondente")), "totale_netto": tot_n, "note_generali": note_finali, "data_consegna": str(data_cons) if data_cons else None, "riferimento": rif_ordine, "numero_preventivo": num_prev}
+        testata = {
+            "id_cliente": cliente_sel['id'] if cliente_sel else None, 
+            "ragione_sociale_cliente": cliente_sel['ragione_sociale'] if cliente_sel else "", 
+            "id_agente": str(user_data.get("agente_corrispondente")), 
+            "totale_netto": tot_n, "note_generali": note_finali, 
+            "data_consegna": str(data_cons) if data_cons else None, 
+            "riferimento": rif_ordine, "numero_preventivo": num_prev
+        }
 
         cp, cs = st.columns(2)
         if cliente_sel:
             try:
                 pdf_b = genera_pdf_ordine(cliente_sel, testata, st.session_state.righe_preventivo)
                 cp.download_button("📄 SCARICA PDF", data=pdf_b, file_name=f"{num_prev}.pdf", mime="application/pdf", use_container_width=True)
-            except: cp.error("Errore PDF")
+            except: cp.error("Errore generazione PDF")
+        
         if cs.button("💾 SALVA E CHIUDI", type="primary", use_container_width=True):
             if not cliente_sel: st.error("Seleziona un cliente!")
             else:
