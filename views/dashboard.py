@@ -20,8 +20,9 @@ def load_all_data(url, key):
     total_estimated = 80000 
 
     while True:
+        # La query ora include correttamente 'Famiglia'
         response = supabase.table("fatturati").select(
-            "AnnoRif,MeseRif,AgenteDoc,Cliente,ImportoNettoRiga,Merceologica,CodArt,IdAgenteDoc"
+            "AnnoRif,MeseRif,AgenteDoc,Cliente,ImportoNettoRiga,Merceologica,CodArt,IdAgenteDoc,Famiglia"
         ).range(start, start + chunk_size - 1).execute()
         
         data = response.data
@@ -58,6 +59,10 @@ def show_dashboard():
     df_base["ImportoNettoRiga"] = pd.to_numeric(df_base["ImportoNettoRiga"], errors='coerce').fillna(0)
     df_base["IdAgenteDoc"] = df_base["IdAgenteDoc"].astype(str)
     df_base["AgenteDoc"] = df_base["AgenteDoc"].astype(str).str.upper().str.strip()
+    
+    # Gestione colonna Famiglia (Marchio)
+    df_base["Famiglia"] = df_base["Famiglia"].astype(str).str.upper().str.strip()
+    df_base["Famiglia"] = df_base["Famiglia"].replace(["0", "NAN", "NONE", ""], "NON SPECIFICATO")
 
     st.subheader("📊 Performance & Analisi Comparativa")
     
@@ -75,7 +80,6 @@ def show_dashboard():
         
         with f2:
             mesi_disp = sorted(df_base["MeseRif"].unique().tolist())
-            # Default: tutti i mesi disponibili
             mesi_sel = st.multiselect("📅 Mesi da includere", options=mesi_disp, default=mesi_disp)
         
         agente_nome_sel = "Tutti"
@@ -86,14 +90,10 @@ def show_dashboard():
                 agente_nome_sel = st.selectbox("👤 Filtra per Agente", opzioni_agenti)
 
     # --- 3. LOGICA DI FILTRAGGIO ---
-    # Filtro Anni
     df_final = df_base[df_base["AnnoRif"].isin(anni_sel)]
-    
-    # Filtro Mesi
     if mesi_sel:
         df_final = df_final[df_final["MeseRif"].isin(mesi_sel)]
     
-    # Filtro Ruolo/Agente
     if user_data["ruolo"] == "agente":
         df_final = df_final[df_final["IdAgenteDoc"] == my_agente_id]
     elif agente_nome_sel != "Tutti":
@@ -102,7 +102,7 @@ def show_dashboard():
 
     # --- 4. VISUALIZZAZIONE DATI ---
     if not df_final.empty:
-        # Metriche Totali per Anno (basate sui mesi selezionati)
+        # Metriche Totali per Anno
         cols_metric = st.columns(len(anni_sel) if anni_sel else 1)
         for i, anno in enumerate(sorted(anni_sel, reverse=True)):
             val = df_final[df_final["AnnoRif"] == anno]["ImportoNettoRiga"].sum()
@@ -113,9 +113,7 @@ def show_dashboard():
         st.subheader("📈 Andamento Mensile Year-over-Year")
         res_mensile = df_final.groupby(["AnnoRif", "MeseRif"])["ImportoNettoRiga"].sum().reset_index()
         res_mensile["AnnoRif"] = res_mensile["AnnoRif"].astype(str)
-        
-        nomi_mesi = {1: "Gen", 2: "Feb", 3: "Mar", 4: "Apr", 5: "Mag", 6: "Giu", 
-                     7: "Lug", 8: "Ago", 9: "Set", 10: "Ott", 11: "Nov", 12: "Dic"}
+        nomi_mesi = {1: "Gen", 2: "Feb", 3: "Mar", 4: "Apr", 5: "Mag", 6: "Giu", 7: "Lug", 8: "Ago", 9: "Set", 10: "Ott", 11: "Nov", 12: "Dic"}
         res_mensile["Mese"] = res_mensile["MeseRif"].map(nomi_mesi)
         res_mensile = res_mensile.sort_values("MeseRif")
 
@@ -132,7 +130,6 @@ def show_dashboard():
         if user_data["ruolo"] != "agente":
             st.divider()
             st.subheader("👤 Performance Agenti: Confronto Anni")
-            
             res_agenti = df_final.groupby(["AgenteDoc", "AnnoRif"])["ImportoNettoRiga"].sum().reset_index()
             res_agenti["AnnoRif"] = res_agenti["AnnoRif"].astype(str)
             ordine_agenti = res_agenti.groupby("AgenteDoc")["ImportoNettoRiga"].sum().sort_values(ascending=False).index
@@ -147,10 +144,28 @@ def show_dashboard():
             fig_agenti.update_layout(height=500, xaxis_tickangle=-45, legend=dict(orientation="h", y=1.1, x=1, title=None))
             st.plotly_chart(fig_agenti, use_container_width=True)
 
-        # --- GRAFICO 3: CATEGORIE MERCEOLOGICHE ---
+        # --- GRAFICO 3: DISTRIBUZIONE PER MARCHIO (FAMIGLIA) ---
+        st.divider()
+        st.subheader("🏆 Distribuzione per Marchio")
+        res_famiglia = df_final.groupby(["Famiglia", "AnnoRif"])["ImportoNettoRiga"].sum().reset_index()
+        res_famiglia["AnnoRif"] = res_famiglia["AnnoRif"].astype(str)
+        
+        # Ordiniamo i marchi per fatturato totale decrescente
+        ordine_famiglia = res_famiglia.groupby("Famiglia")["ImportoNettoRiga"].sum().sort_values(ascending=True).index
+
+        fig_famiglia = px.bar(
+            res_famiglia, x="ImportoNettoRiga", y="Famiglia", color="AnnoRif",
+            barmode="group", orientation='h',
+            category_orders={"Famiglia": ordine_famiglia},
+            template="plotly_white",
+            color_discrete_sequence=px.colors.qualitative.Bold, text_auto='.2s'
+        )
+        fig_famiglia.update_layout(height=max(400, len(res_famiglia.Famiglia.unique())*35), yaxis_title=None)
+        st.plotly_chart(fig_famiglia, use_container_width=True)
+
+        # --- GRAFICO 4: CATEGORIE MERCEOLOGICHE ---
         st.divider()
         st.subheader("📦 Distribuzione per Categoria")
-        # Anche qui aggiungiamo il colore per anno se vogliamo vedere il confronto per categoria
         res_merce = df_final.groupby(["Merceologica", "AnnoRif"])["ImportoNettoRiga"].sum().reset_index()
         res_merce["AnnoRif"] = res_merce["AnnoRif"].astype(str)
         res_merce = res_merce.sort_values("ImportoNettoRiga", ascending=True)
