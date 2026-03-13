@@ -4,7 +4,7 @@ import os
 from streamlit_cookies_manager import EncryptedCookieManager
 
 # 1. CONFIGURAZIONE (Deve essere assolutamente il primo comando)
-st.set_page_config(page_title="Vivetti App", layout="wide")
+st.set_page_config(page_title="Vivetti App", page_icon="LogoVivetti.png", layout="wide")
 
 # 2. INIZIALIZZAZIONE GESTORE COOKIE
 # Nota: La password serve a criptare il contenuto del cookie sul browser dell'utente
