@@ -87,7 +87,7 @@ with st.sidebar:
     
     scelta = st.radio(
         "NAVIGAZIONE",
-        ["📊 Nuovo Preventivo", "📊 Archivio Preventivi", "📊 Performance", "🏬 Clienti", "📦 Magazzino", "🗓️ Eventi Aziendali", "📈 Nota Spese"],
+        ["📊 Nuovo Preventivo", "📊 Archivio Preventivi", "📦 Archivio Ordini", "📊 Performance", "🏬 Clienti", "📦 Magazzino", "🗓️ Eventi Aziendali", "📈 Nota Spese"],
         index=0,
         key="menu_nav"
     )
@@ -106,6 +106,13 @@ elif scelta == "📊 Archivio Preventivi":
         show_archivio()
     except Exception as e:
         st.info("La pagina 'Archivio' è in fase di sviluppo o il file non è presente.")
+
+elif scelta == "📦 Archivio Ordini":
+    try:
+        from views.ordinato import show_ordinato
+        show_ordinato()
+    except Exception as e:
+        st.info("La pagina 'Ordinato' è in fase di sviluppo o il file non è presente.")
 
 elif scelta == "📊 Performance":
     try:
