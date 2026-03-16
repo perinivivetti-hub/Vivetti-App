@@ -275,7 +275,7 @@ def show_preventivi():
                     st.write(f"**Codice:** `{item['CODICE']}` | **Descrizione:** {item['DESCRIZIONE']}")
                 
                 col_p1, col_p2 = st.columns(2)
-                pl = col_p1.number_input("Prezzo Unitario LORDO (€)", value=float(item.get('PREZZO', item.get('PREZZO_LORDO', 0.0))), format="%.2f")
+                pl = col_p1.number_input("Prezzo Unitario", value=float(item.get('PREZZO', item.get('PREZZO_LORDO', 0.0))), format="%.2f")
                 qta_val = col_p2.number_input("Quantità", min_value=1, value=int(item.get('QTA', 1)))
                 
                 metodo = st.radio("Metodo Calcolo Prezzo:", ["Sconti %", "Netto Fisso"], horizontal=True)
