@@ -23,6 +23,7 @@ def get_base_data():
         return pd.DataFrame()
 
 def carica_dettagli_ordine(id_ordine):
+    """Carica testata e righe solo al momento del bisogno"""
     supabase = get_supabase_client()
     testata = supabase.table("preventivi_testata").select("*").eq("id", id_ordine).single().execute()
     righe = supabase.table("preventivi_righe").select("*").eq("id_preventivo", id_ordine).order("id").execute()
@@ -53,12 +54,13 @@ def genera_pdf_conferma(cliente_ragione_sociale, testata, righe):
     pdf.cell(100, 6, f"RIFERIMENTO: {testata['riferimento'] if testata['riferimento'] else '-'}", ln=False)
     pdf.cell(0, 6, f"DATA ORDINE: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='R')
     
+    # Gestione Data Consegna formattata
     cons_str = "-"
     if testata.get('data_consegna'):
         try:
-            cons_str = datetime.strptime(testata['data_consegna'], '%Y-%m-%d').strftime('%d/%m/%Y')
+            cons_str = datetime.strptime(str(testata['data_consegna']), '%Y-%m-%d').strftime('%d/%m/%Y')
         except:
-            cons_str = testata['data_consegna']
+            cons_str = str(testata['data_consegna'])
     
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 6, f"CONSEGNA PREVISTA: {cons_str}", ln=True)
@@ -127,7 +129,7 @@ def show_ordinato():
         for _, row in df_stats.iterrows():
             if row.get('data_consegna'):
                 try:
-                    m_idx = datetime.strptime(row['data_consegna'], '%Y-%m-%d').month
+                    m_idx = datetime.strptime(str(row['data_consegna']), '%Y-%m-%d').month
                     totali[mesi_nomi[m_idx]] += float(row['totale_netto'])
                 except:
                     totali["Senza Data"] += float(row['totale_netto'])
@@ -175,19 +177,28 @@ def show_ordinato():
             with st.expander(label):
                 c1, c2, c3 = st.columns(3)
                 
-                # Generazione PDF e Download
-                try:
-                    _, r_dettagli = carica_dettagli_ordine(row['id'])
-                    pdf_data = genera_pdf_conferma(row['ragione_sociale_cliente'], row, r_dettagli)
-                    c1.download_button("📄 SCARICA PDF", data=pdf_data, file_name=f"Ordine_{row['numero_preventivo']}.pdf", mime="application/pdf", key=f"dl_{row['id']}")
-                except Exception as e:
-                    c1.error("Errore PDF")
+                # --- LOGICA PDF ON-DEMAND ---
+                if c1.button("📄 GENERA PDF", key=f"btn_pdf_{row['id']}", use_container_width=True):
+                    with st.spinner("Creazione PDF in corso..."):
+                        # Carichiamo i dettagli solo ora!
+                        t_d, r_d = carica_dettagli_ordine(row['id'])
+                        pdf_data = genera_pdf_conferma(row['ragione_sociale_cliente'], t_d, r_d)
+                        
+                        st.download_button(
+                            label="⬇️ SCARICA ORA", 
+                            data=pdf_data, 
+                            file_name=f"Ordine_{row['numero_preventivo']}.pdf", 
+                            mime="application/pdf", 
+                            key=f"dl_{row['id']}",
+                            use_container_width=True
+                        )
 
                 if c2.button("🔄 RIPRISTINA", key=f"rip_{row['id']}", use_container_width=True):
                     supabase.table("preventivi_testata").update({"stato": "Preventivo"}).eq("id", row['id']).execute()
                     st.rerun()
 
                 if c3.button("🗑️ ELIMINA", key=f"del_{row['id']}", use_container_width=True, type="secondary"):
+                    # Qui potresti aggiungere un controllo di conferma Streamlit
                     supabase.table("preventivi_testata").delete().eq("id", row['id']).execute()
                     st.rerun()
 

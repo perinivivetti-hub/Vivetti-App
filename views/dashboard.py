@@ -20,7 +20,7 @@ def load_all_data(url, key):
     total_estimated = 80000 
 
     while True:
-        # La query ora include correttamente 'Famiglia'
+        # La query include ora esplicitamente CodArt e Famiglia
         response = supabase.table("fatturati").select(
             "AnnoRif,MeseRif,AgenteDoc,Cliente,ImportoNettoRiga,Merceologica,CodArt,IdAgenteDoc,Famiglia"
         ).range(start, start + chunk_size - 1).execute()
@@ -55,14 +55,22 @@ def show_dashboard():
         return
 
     # --- 1. PULIZIA E NORMALIZZAZIONE ---
-    df_base = df_raw[~df_raw["CodArt"].astype(str).str.upper().str.contains('RAEE', na=False)].copy()
+    df_base = df_raw.copy()
+    
+    # Fix per errore 'CodArt': controlliamo se esiste prima del filtro RAEE
+    if "CodArt" in df_base.columns:
+        df_base = df_base[~df_base["CodArt"].astype(str).str.upper().str.contains('RAEE', na=False)].copy()
+    
     df_base["ImportoNettoRiga"] = pd.to_numeric(df_base["ImportoNettoRiga"], errors='coerce').fillna(0)
     df_base["IdAgenteDoc"] = df_base["IdAgenteDoc"].astype(str)
     df_base["AgenteDoc"] = df_base["AgenteDoc"].astype(str).str.upper().str.strip()
     
     # Gestione colonna Famiglia (Marchio)
-    df_base["Famiglia"] = df_base["Famiglia"].astype(str).str.upper().str.strip()
-    df_base["Famiglia"] = df_base["Famiglia"].replace(["0", "NAN", "NONE", ""], "NON SPECIFICATO")
+    if "Famiglia" in df_base.columns:
+        df_base["Famiglia"] = df_base["Famiglia"].astype(str).str.upper().str.strip()
+        df_base["Famiglia"] = df_base["Famiglia"].replace(["0", "NAN", "NONE", ""], "NON SPECIFICATO")
+    else:
+        df_base["Famiglia"] = "NON SPECIFICATO"
 
     st.subheader("📊 Performance & Analisi Comparativa")
     
@@ -149,8 +157,6 @@ def show_dashboard():
         st.subheader("🏆 Distribuzione per Marchio")
         res_famiglia = df_final.groupby(["Famiglia", "AnnoRif"])["ImportoNettoRiga"].sum().reset_index()
         res_famiglia["AnnoRif"] = res_famiglia["AnnoRif"].astype(str)
-        
-        # Ordiniamo i marchi per fatturato totale decrescente
         ordine_famiglia = res_famiglia.groupby("Famiglia")["ImportoNettoRiga"].sum().sort_values(ascending=True).index
 
         fig_famiglia = px.bar(
@@ -177,6 +183,20 @@ def show_dashboard():
         )
         fig_merce.update_layout(height=max(400, len(res_merce.Merceologica.unique())*40), yaxis_title=None)
         st.plotly_chart(fig_merce, use_container_width=True)
+
+        # --- GRAFICO 5: TOP 30 CLIENTI ---
+        st.divider()
+        st.subheader("🏙️ Top 30 Clienti per Fatturato")
+        res_clienti = df_final.groupby("Cliente")["ImportoNettoRiga"].sum().sort_values(ascending=False).head(30).reset_index()
+        res_clienti = res_clienti.sort_values("ImportoNettoRiga", ascending=True)
+
+        fig_clienti = px.bar(
+            res_clienti, x="ImportoNettoRiga", y="Cliente", orientation='h',
+            text_auto='.3s', color="ImportoNettoRiga", color_continuous_scale="Viridis",
+            template="plotly_white"
+        )
+        fig_clienti.update_layout(height=800, showlegend=False, coloraxis_showscale=False, yaxis_title=None)
+        st.plotly_chart(fig_clienti, use_container_width=True)
     
     else:
         st.info("Nessun dato trovato per i filtri selezionati.")
