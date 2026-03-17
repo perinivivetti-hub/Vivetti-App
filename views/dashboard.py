@@ -57,7 +57,6 @@ def show_dashboard():
     # --- 1. PULIZIA E NORMALIZZAZIONE ---
     df_base = df_raw.copy()
     
-    # Fix per errore 'CodArt': controlliamo se esiste prima del filtro RAEE
     if "CodArt" in df_base.columns:
         df_base = df_base[~df_base["CodArt"].astype(str).str.upper().str.contains('RAEE', na=False)].copy()
     
@@ -65,7 +64,6 @@ def show_dashboard():
     df_base["IdAgenteDoc"] = df_base["IdAgenteDoc"].astype(str)
     df_base["AgenteDoc"] = df_base["AgenteDoc"].astype(str).str.upper().str.strip()
     
-    # Gestione colonna Famiglia (Marchio)
     if "Famiglia" in df_base.columns:
         df_base["Famiglia"] = df_base["Famiglia"].astype(str).str.upper().str.strip()
         df_base["Famiglia"] = df_base["Famiglia"].replace(["0", "NAN", "NONE", ""], "NON SPECIFICATO")
@@ -110,11 +108,30 @@ def show_dashboard():
 
     # --- 4. VISUALIZZAZIONE DATI ---
     if not df_final.empty:
-        # Metriche Totali per Anno
-        cols_metric = st.columns(len(anni_sel) if anni_sel else 1)
-        for i, anno in enumerate(sorted(anni_sel, reverse=True)):
-            val = df_final[df_final["AnnoRif"] == anno]["ImportoNettoRiga"].sum()
-            cols_metric[i].metric(f"Totale {anno}", f"€ {val:,.2f}")
+        # Metriche Totali con calcolo variazione percentuale
+        st.divider()
+        anni_ordinati = sorted(anni_sel) # Ordine cronologico per calcolo delta
+        cols_metric = st.columns(len(anni_ordinati))
+
+        for i, anno in enumerate(anni_ordinati):
+            # Valore anno corrente
+            val_attuale = df_final[df_final["AnnoRif"] == anno]["ImportoNettoRiga"].sum()
+            
+            delta_val = None
+            if i > 0:
+                # Valore anno precedente tra quelli selezionati
+                val_precedente = df_final[df_final["AnnoRif"] == anni_ordinati[i-1]]["ImportoNettoRiga"].sum()
+                if val_precedente > 0:
+                    variazione = ((val_attuale - val_precedente) / val_precedente) * 100
+                    delta_val = f"{variazione:+.1f}% vs {anni_ordinati[i-1]}"
+                else:
+                    delta_val = "N/A"
+
+            cols_metric[i].metric(
+                label=f"Totale {anno}", 
+                value=f"€ {val_attuale:,.2f}", 
+                delta=delta_val
+            )
 
         # --- GRAFICO 1: ANDAMENTO MENSILE YoY ---
         st.divider()
