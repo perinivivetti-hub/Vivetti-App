@@ -87,7 +87,7 @@ with st.sidebar:
     
     scelta = st.radio(
         "NAVIGAZIONE",
-        ["📊 Nuovo Preventivo", "📊 Archivio Preventivi", "📦 Archivio Ordini", "📊 Performance", "🏬 Clienti", "📦 Magazzino", "🗓️ Eventi Aziendali", "📈 Nota Spese"],
+        ["📊 Nuovo Preventivo", "📊 Archivio Preventivi", "📦 Archivio Ordini", "📊 Performance", "🏬 Clienti", "📦 Magazzino", "🗓️ Eventi Aziendali", "📈 Nota Spese", "🗺️ Mappa"],
         index=0,
         key="menu_nav"
     )
@@ -119,7 +119,9 @@ elif scelta == "📊 Performance":
         from views.dashboard import show_dashboard
         show_dashboard()
     except Exception as e:
+        # Questo ti mostrerà l'errore REALE sotto il messaggio blu
         st.info("La pagina 'Performance' è in fase di sviluppo o il file non è presente.")
+        st.error(f"Errore tecnico: {e}")
     
 elif scelta == "🏬 Clienti":
     try:
@@ -136,3 +138,10 @@ elif scelta == "🗓️ Eventi Aziendali":
 
 elif scelta == "📈 Nota Spese":
     st.info("La pagina **Nota Spese** è attualmente in fase di sviluppo (WIP).")
+
+elif scelta == "🗺️ Mappa":
+    try:
+        from views.mappa import show_mappa
+        show_mappa()
+    except Exception as e:
+        st.info("La pagina 'Mappa' è in fase di sviluppo o il file non è presente.")
