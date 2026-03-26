@@ -6,3 +6,6 @@ supabase
 fpdf
 streamlit-searchbox
 streamlit-cookies-manager
+geopy
+streamlit-folium
+folium
