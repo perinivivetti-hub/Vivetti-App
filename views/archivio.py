@@ -7,6 +7,7 @@ from streamlit_searchbox import st_searchbox
 import io
 import os
 import time
+import base64
 
 # --- CONFIGURAZIONE PAGINA ---
 st.markdown("""
@@ -27,9 +28,7 @@ def get_supabase_client():
 supabase = get_supabase_client()
 
 # --- 2. FUNZIONI DI RICERCA SERVER-SIDE ---
-
 def search_clients_arc(search_term: str):
-    """Cerca i clienti direttamente su Supabase"""
     if not search_term or len(search_term) < 2:
         return []
     user_data = st.session_state.get('user_info', {})
@@ -42,7 +41,6 @@ def search_clients_arc(search_term: str):
     return [(f"{row['ragione_sociale']} ({row.get('citta', '')})", row['id']) for row in res.data]
 
 def search_articles_arc(search_term: str):
-    """Cerca gli articoli nel listino via API"""
     if not search_term or len(search_term) < 3:
         return []
     res = supabase.table("listino_import")\
@@ -53,9 +51,7 @@ def search_articles_arc(search_term: str):
     return [(f"{row['CODICE']} | {row['DESCRIZIONE'][:70]}...", row) for row in res.data]
 
 # --- 3. GESTIONE DATI ---
-
 def carica_preventivo(id_preventivo):
-    """Recupera testata e righe di un preventivo specifico"""
     testata = supabase.table("preventivi_testata").select("*").eq("id", id_preventivo).single().execute()
     righe = supabase.table("preventivi_righe").select("*").eq("id_preventivo", id_preventivo).order("id").execute()
     session_righe = []
@@ -96,12 +92,11 @@ def aggiorna_preventivo_db(id_preventivo, info_testata, righe):
     except Exception as e: return str(e)
 
 # --- 4. UTILITY PDF E CALCOLI ---
-
 def format_sconti_string(s1, s2, s3):
     parts = []
     for s in [s1, s2, s3]:
         try:
-            val = float(s); 
+            val = float(s)
             if val > 0: parts.append(f"{val:g}")
         except: continue
     return "+".join(parts) if parts else "-"
@@ -136,6 +131,13 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
     pdf.ln(); pdf.set_font("Arial", '', 8)
 
     for r in righe:
+        # --- FIX PAGE BREAK ---
+        if pdf.get_y() > 250:
+            pdf.add_page()
+            pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
+            for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', True)
+            pdf.ln(); pdf.set_font("Arial", '', 8)
+
         if r.get('tipo') == 'NOTA_TESTO':
             pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(245, 245, 245)
             pdf.multi_cell(180, 8, r['DESCRIZIONE'].upper(), border=1, align='L', fill=True)
@@ -143,14 +145,28 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
         else:
             p_l, p_u = float(r['PREZZO_LORDO']), (0.0 if r['SCONTO_MERCE'] else float(r['PREZZO_NETTO']))
             s_str = "OMAGGIO" if r['SCONTO_MERCE'] else format_sconti_string(r['S1'], r['S2'], r['S3'])
+            
+            # Limite caratteri descrizione
+            desc_testo = str(r['DESCRIZIONE'])
+            if len(desc_testo) > 250: desc_testo = desc_testo[:247] + "..."
+            if r.get('NOTA'): desc_testo += f"\nNote: {r['NOTA']}"
+            
+            # Calcolo altezza dinamica cella
             y_before = pdf.get_y()
-            pdf.set_xy(45, y_before); pdf.multi_cell(55, 5, r['DESCRIZIONE'], border=0, align='L')
+            pdf.set_xy(45, y_before)
+            pdf.multi_cell(55, 5, desc_testo, border=0, align='L')
             h = max(pdf.get_y() - y_before, 8)
-            pdf.set_xy(10, y_before); pdf.cell(35, h, str(r['CODICE']), border=1, align='C')
-            pdf.set_xy(45, y_before); pdf.multi_cell(55, 5, r['DESCRIZIONE'], border=1, align='L')
-            pdf.set_xy(100, y_before); pdf.cell(10, h, str(r['QTA']), border=1, align='C')
-            pdf.cell(20, h, f"{p_l:,.2f}", border=1, align='R'); pdf.cell(20, h, s_str, border=1, align='C')
-            pdf.cell(20, h, f"{p_u:,.2f}", border=1, align='R'); pdf.cell(20, h, f"{(p_u * r['QTA']):,.2f}", border=1, ln=1, align='R')
+            
+            pdf.set_xy(10, y_before)
+            pdf.cell(35, h, str(r['CODICE']), border=1, align='C')
+            pdf.set_xy(45, y_before)
+            pdf.multi_cell(55, 5, desc_testo, border=1, align='L')
+            pdf.set_xy(100, y_before)
+            pdf.cell(10, h, str(r['QTA']), border=1, align='C')
+            pdf.cell(20, h, f"{p_l:,.2f}", border=1, align='R')
+            pdf.cell(20, h, s_str, border=1, align='C')
+            pdf.cell(20, h, f"{p_u:,.2f}", border=1, align='R')
+            pdf.cell(20, h, f"{(p_u * r['QTA']):,.2f}", border=1, ln=1, align='R')
             
     pdf.ln(5); pdf.set_font("Arial", 'B', 12)
     pdf.cell(160, 10, "TOTALE NETTO (IVA ESCLUSA)", 0, 0, 'R')
@@ -165,10 +181,10 @@ def show_archivio():
     if 'righe_archivio' not in st.session_state: st.session_state.righe_archivio = []
     if 'temp_item_arc' not in st.session_state: st.session_state.temp_item_arc = None
     if 'search_key_arc' not in st.session_state: st.session_state.search_key_arc = 500
+    if 'opened_expander_id' not in st.session_state: st.session_state.opened_expander_id = None
 
     user_data = st.session_state.get('user_info', {})
 
-    # --- VISTA LISTA (OTTIMIZZATA) ---
     if st.session_state.edit_id is None:
         col_f1, col_f2 = st.columns([2, 1])
         with col_f1:
@@ -189,7 +205,10 @@ def show_archivio():
                 data_f = datetime.fromisoformat(row['created_at'].replace('Z', '+00:00')).strftime('%d/%m/%Y')
                 label = f"📄 {row['numero_preventivo']} | {row['ragione_sociale_cliente']} | € {row['totale_netto']:,.2f} | {data_f}"
                 
-                with st.expander(label):
+                # Controllo se questo expander deve restare aperto
+                is_open = st.session_state.opened_expander_id == row['id']
+                
+                with st.expander(label, expanded=is_open):
                     c1, c_edit, c_pdf, c_ord, c_del = st.columns([1.6, 0.7, 0.7, 0.8, 0.7])
                     c1.markdown(f"**Riferimento:** {row['riferimento'] or '-'}")
                     
@@ -200,14 +219,35 @@ def show_archivio():
                         st.session_state.righe_archivio = righe
                         st.rerun()
                     
-                    # PDF ON-DEMAND (Genera solo su click)
-                    if c_pdf.button("📄 PDF", key=f"pre_pdf_{row['id']}", use_container_width=True):
-                        with st.spinner("Generazione..."):
+                    # --- LOGICA PDF iOS-SAFE + AUTO-OPEN ---
+                    pdf_key = f"pdf_ready_{row['id']}"
+                    if pdf_key not in st.session_state: st.session_state[pdf_key] = None
+
+                    if c_pdf.button("📄 PDF", key=f"btn_gen_{row['id']}", use_container_width=True):
+                        with st.spinner("..."):
+                            st.session_state.opened_expander_id = row['id'] # Salva posizione
                             _, r_pdf = carica_preventivo(row['id'])
                             pdf_bytes = genera_pdf_ordine(row['ragione_sociale_cliente'], row, r_pdf)
-                            st.download_button("⬇️ SCARICA", data=pdf_bytes, file_name=f"{row['numero_preventivo']}.pdf", mime="application/pdf", key=f"dl_{row['id']}", use_container_width=True)
+                            st.session_state[pdf_key] = base64.b64encode(pdf_bytes).decode()
+                            st.rerun()
+                    
+                    if st.session_state[pdf_key]:
+                        b64_data = st.session_state[pdf_key]
+                        file_n = f"{row['numero_preventivo']}.pdf"
+                        pdf_link_html = f"""
+                            <div style="text-align: center; margin-top: 5px;">
+                                <a href="data:application/pdf;base64,{b64_data}" 
+                                   target="_blank" 
+                                   download="{file_n}" 
+                                   style="color: #ff4b4b; text-decoration: none; font-weight: bold; font-size: 14px;">
+                                    ⬇️ SCARICA
+                                </a>
+                            </div>
+                        """
+                        c_pdf.markdown(pdf_link_html, unsafe_allow_html=True)
 
                     if c_ord.button("🛒 ORDINE", key=f"ord_{row['id']}", use_container_width=True):
+                        st.session_state.opened_expander_id = None
                         if trasforma_in_ordine(row['id']) is True:
                             st.toast("Convertito in ordine!", icon="✅")
                             time.sleep(1); st.rerun()
@@ -216,8 +256,8 @@ def show_archivio():
                         supabase.table("preventivi_testata").delete().eq("id", row['id']).execute()
                         st.rerun()
 
-    # --- VISTA MODIFICA ---
     else:
+        # --- SEZIONE EDIT ---
         st.info(f"Modifica Documento: **{st.session_state.edit_testata['numero_preventivo']}**")
         if st.button("⬅️ ANNULLA E TORNA INDIETRO"):
             st.session_state.edit_id = None; st.rerun()
