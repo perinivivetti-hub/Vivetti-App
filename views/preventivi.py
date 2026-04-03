@@ -2,12 +2,10 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 from datetime import datetime
-from fpdf import FPDF
 from streamlit_searchbox import st_searchbox
 import io
 import os
 import time
-import base64
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Vivetti - Nuovo Preventivo", layout="wide")
@@ -25,27 +23,6 @@ st.markdown("""
         border-left: 5px solid #fcc419; margin: 5px 0;
     }
     .stButton button { font-weight: bold; border-radius: 8px; }
-    
-    /* Bottone PDF Universale per fix iOS */
-    .pdf-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        background-color: #ff4b4b;
-        color: white !important;
-        padding: 0.5rem 1rem;
-        border-radius: 8px;
-        width: 100%;
-        font-weight: bold;
-        cursor: pointer;
-        border: none;
-        text-align: center;
-        text-decoration: none !important;
-        transition: background-color 0.3s ease;
-    }
-    .pdf-button:hover {
-        background-color: #e64141;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -81,7 +58,7 @@ def search_articles(search_term: str):
     if not res.data: return []
     return [(f"{row['CODICE']} | {row['DESCRIZIONE'][:70]}...", row) for row in res.data]
 
-# --- 3. UTILITY CALCOLI E PDF ---
+# --- 3. UTILITY CALCOLI ---
 def format_sconti_string(s1, s2, s3):
     parts = []
     for s in [s1, s2, s3]:
@@ -94,78 +71,14 @@ def format_sconti_string(s1, s2, s3):
 def calcola_netto(listino, s1, s2, s3):
     return float(listino) * (1 - float(s1 or 0)/100) * (1 - float(s2 or 0)/100) * (1 - float(s3 or 0)/100)
 
-def genera_pdf_ordine(cliente, testata, righe):
-    pdf = FPDF(orientation='P', unit='mm', format='A4')
-    pdf.add_page()
-    logo_path = 'LogoVivetti.png'
-    if os.path.exists(logo_path):
-        pdf.image(logo_path, x=10, y=8, w=45) 
-    
-    pdf.set_font("Arial", 'B', 15)
-    pdf.set_y(12)
-    pdf.cell(0, 10, f"OFFERTA / ORDINE: {testata['numero_preventivo']}", ln=True, align='R')
-    
-    pdf.ln(18)
-    pdf.set_font("Arial", '', 10)
-    pdf.cell(0, 6, f"SPETT.LE CLIENTE: {cliente['ragione_sociale']}", ln=True)
-    pdf.cell(100, 6, f"RIFERIMENTO: {testata['riferimento'] if testata['riferimento'] else '-'}", ln=False)
-    pdf.cell(0, 6, f"DATA EMISSIONE: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='R')
-    
-    consegna_str = "-"
-    if testata.get('data_consegna'):
-        try: consegna_str = datetime.strptime(testata['data_consegna'], '%Y-%m-%d').strftime('%d/%m/%Y')
-        except: consegna_str = testata['data_consegna']
-            
-    pdf.set_font("Arial", 'B', 10)
-    pdf.cell(100, 6, f"CONSEGNA PREVISTA: {consegna_str}", ln=True)
-    pdf.ln(8)
-    pdf.set_font("Arial", 'B', 8)
-    pdf.set_fill_color(230, 230, 230)
-    
-    cols = [("CODICE", 35), ("DESCRIZIONE", 55), ("Q.TA", 10), ("PREZZO U.", 20), ("SCONTI", 20), ("NETTO U.", 20), ("TOTALE", 20)]
-    for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', True)
-    pdf.ln()
-    pdf.set_font("Arial", '', 8)
-
-    for r in righe:
-        if r.get('tipo') == 'NOTA_TESTO':
-            pdf.set_font("Arial", 'B', 9)
-            pdf.set_fill_color(245, 245, 245)
-            pdf.multi_cell(180, 8, r['DESCRIZIONE'].upper(), border=1, align='L', fill=True)
-            pdf.set_font("Arial", '', 8)
-        else:
-            p_l = float(r['PREZZO_LORDO'])
-            p_u = 0.0 if r['SCONTO_MERCE'] else float(r['PREZZO_NETTO'])
-            s_str = "OMAGGIO" if r['SCONTO_MERCE'] else format_sconti_string(r['S1'], r['S2'], r['S3'])
-            y_before = pdf.get_y()
-            desc_testo = r['DESCRIZIONE']
-            if r.get('NOTA'): desc_testo += f"\nNote: {r['NOTA']}"
-            pdf.set_xy(45, y_before)
-            pdf.multi_cell(55, 5, desc_testo, border=0, align='L')
-            h = max(pdf.get_y() - y_before, 8)
-            pdf.set_xy(10, y_before)
-            pdf.cell(35, h, str(r['CODICE']), border=1, align='C')
-            pdf.set_xy(45, y_before)
-            pdf.multi_cell(55, 5, desc_testo, border=1, align='L')
-            pdf.set_xy(100, y_before)
-            pdf.cell(10, h, str(r['QTA']), border=1, align='C')
-            pdf.cell(20, h, f"{p_l:,.2f}", border=1, align='R')
-            pdf.cell(20, h, s_str, border=1, align='C')
-            pdf.cell(20, h, f"{p_u:,.2f}", border=1, align='R')
-            pdf.cell(20, h, f"{(p_u * r['QTA']):,.2f}", border=1, ln=1, align='R')
-            
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(160, 10, "TOTALE NETTO (IVA ESCLUSA)", 0, 0, 'R')
-    pdf.cell(30, 10, f"EUR {testata['totale_netto']:,.2f}", 0, 1, 'R')
-    
-    return pdf.output(dest='S').encode('latin-1', errors='replace')
-
 # --- 4. SALVATAGGIO DB ---
 def salva_preventivo_db(info_testata, righe):
     try:
+        # Inserimento Testata
         res_t = supabase.table("preventivi_testata").insert(info_testata).execute()
         id_prev = res_t.data[0]['id']
+        
+        # Preparazione Righe
         righe_db = [{
             "id_preventivo": id_prev, 
             "codice_articolo": r.get('CODICE', 'NOTA'), 
@@ -177,9 +90,11 @@ def salva_preventivo_db(info_testata, righe):
             "prezzo_netto_unitario": r.get('PREZZO_NETTO', 0), 
             "nota_riga": r.get('tipo', '') 
         } for r in righe]
+        
         supabase.table("preventivi_righe").insert(righe_db).execute()
         return True, id_prev
-    except Exception as e: return False, str(e)
+    except Exception as e: 
+        return False, str(e)
 
 # --- 5. INTERFACCIA PRINCIPALE ---
 def show_preventivi():
@@ -189,12 +104,13 @@ def show_preventivi():
     if 'cliente_selezionato_obj' not in st.session_state: st.session_state.cliente_selezionato_obj = None
 
     user_data = st.session_state.get('user_info', {})
-    st.subheader("📝 Nuovo Preventivo")
+    st.subheader("📝 Nuova Offerta")
 
     # --- RICERCA CLIENTI ---
     with st.expander("👤 Anagrafica", expanded=not bool(st.session_state.righe_preventivo)):
         cliente_sel = st_searchbox(search_clients, placeholder="🔍 Cerca cliente in rubrica...", key="search_cliente_prev")
-        if cliente_sel: st.session_state.cliente_selezionato_obj = cliente_sel
+        if cliente_sel: 
+            st.session_state.cliente_selezionato_obj = cliente_sel
             
         c1, c2 = st.columns(2)
         data_cons = c1.date_input("Data consegna", value=None, format="DD/MM/YYYY")
@@ -220,7 +136,8 @@ def show_preventivi():
             st.session_state.temp_item = {"tipo": "NOTA_TESTO", "DESCRIZIONE": ""}
             st.rerun()
 
-    if selected_article: st.session_state.temp_item = selected_article
+    if selected_article: 
+        st.session_state.temp_item = selected_article
 
     # --- SCHEDA CONFIGURAZIONE RIGA ---
     if st.session_state.temp_item:
@@ -242,7 +159,8 @@ def show_preventivi():
                     c_m1, c_m2 = st.columns([1, 2])
                     item["CODICE"] = c_m1.text_input("Codice", value=item["CODICE"])
                     item["DESCRIZIONE"] = c_m2.text_input("Descrizione", value=item["DESCRIZIONE"])
-                else: st.write(f"**Codice:** `{item['CODICE']}` | **Descrizione:** {item['DESCRIZIONE']}")
+                else: 
+                    st.write(f"**Codice:** `{item['CODICE']}` | **Descrizione:** {item['DESCRIZIONE']}")
                 
                 col_p1, col_p2 = st.columns(2)
                 pl = col_p1.number_input("Prezzo Unitario", value=float(item.get('PREZZO', item.get('PREZZO_LORDO', 0.0))), format="%.2f")
@@ -251,9 +169,9 @@ def show_preventivi():
                 metodo = st.radio("Metodo Calcolo Prezzo:", ["Sconti %", "Netto Fisso"], horizontal=True)
                 if metodo == "Sconti %":
                     cs1, cs2, cs3 = st.columns(3)
-                    s1 = cs1.number_input("S1 %", value=float(item.get('SCONTO1', item.get('S1', 0))))
-                    s2 = cs2.number_input("S2 %", value=float(item.get('SCONTO2', item.get('S1', 0)))) # Corretto S1->S2
-                    s3 = cs3.number_input("S3 %", value=float(item.get('SCONTO3', item.get('S1', 0)))) # Corretto S1->S3
+                    s1 = cs1.number_input("S1 %", value=float(item.get('SCONTO1', item.get('S1', 0.0))))
+                    s2 = cs2.number_input("S2 %", value=float(item.get('SCONTO2', item.get('S2', 0.0)))) 
+                    s3 = cs3.number_input("S3 %", value=float(item.get('SCONTO3', item.get('S3', 0.0)))) 
                     pn = calcola_netto(pl, s1, s2, s3)
                 else:
                     pn = st.number_input("Netto Unitario (€)", value=float(item.get('PREZZO_NETTO', pl)), format="%.2f")
@@ -277,7 +195,7 @@ def show_preventivi():
 
     # --- RIEPILOGO ---
     if st.session_state.righe_preventivo:
-        st.subheader("📊 Riepilogo Preventivo")
+        st.subheader("📊 Riepilogo")
         tot_n = 0.0
         for idx, riga in enumerate(st.session_state.righe_preventivo):
             if riga.get('tipo') == 'NOTA_TESTO':
@@ -303,55 +221,51 @@ def show_preventivi():
                         st.session_state.righe_preventivo.pop(idx); st.rerun()
 
         st.divider()
+        
+        # --- BLOCCO FINALE: NOTE E STATO ---
         cn, cm = st.columns([2, 1])
         note_finali = cn.text_area("Note finali (condizioni...)")
         cm.metric("TOTALE NETTO", f"€ {tot_n:,.2f}")
         
-        num_prev = f"PREV-{datetime.now().strftime('%y%m%d-%H%M')}"
+        # Selezione Stato Documento
+        col_st, _ = st.columns([1.5, 2])
+        stato_documento = col_st.selectbox(
+            "Salva come:", 
+            ["Preventivo", "Ordine"], 
+            index=0,
+            help="Seleziona 'Ordine' per vederlo direttamente nell'archivio ordini e statistiche."
+        )
+
         cli_obj = st.session_state.cliente_selezionato_obj
-        testata = {
-            "id_cliente": cli_obj['id'] if cli_obj else None, 
-            "ragione_sociale_cliente": cli_obj['ragione_sociale'] if cli_obj else "", 
-            "id_agente": str(user_data.get("agente_corrispondente", "")), 
-            "totale_netto": tot_n, "note_generali": note_finali, 
-            "data_consegna": str(data_cons) if data_cons else None, 
-            "riferimento": rif_ordine, "numero_preventivo": num_prev
-        }
-
-        # --- SEZIONE PDF E SALVATAGGIO ---
-        cp, cs = st.columns(2)
-        if cli_obj:
-            try:
-                # Generazione dei dati PDF
-                pdf_b = genera_pdf_ordine(cli_obj, testata, st.session_state.righe_preventivo)
-                filename = f"{num_prev}_{cli_obj['ragione_sociale'][:15]}.pdf"
-                b64 = base64.b64encode(pdf_b).decode()
-                
-                # HTML per il link "Safe" con icona e testo richiesto
-                pdf_link_html = f"""
-                    <div style="padding-top: 10px;">
-                        <a href="data:application/pdf;base64,{b64}" 
-                           target="_blank" 
-                           download="{filename}" 
-                           class="pdf-link" 
-                           style="color: #ff4b4b; text-decoration: none; font-weight: bold; display: flex; align-items: center; gap: 10px;">
-                            <span style="font-size: 24px;">📄</span> 
-                            <span style="font-size: 18px;">GENERA PDF</span>
-                        </a>
-                    </div>
-                """
-                cp.markdown(pdf_link_html, unsafe_allow_html=True)
-                
-            except Exception as e: 
-                cp.error(f"Errore PDF: {e}")
-
-        if cs.button("💾 SALVA E CHIUDI", type="primary", use_container_width=True):
-            if not cli_obj: st.error("Seleziona un cliente!")
+        num_prev = f"PREV-{datetime.now().strftime('%y%m%d-%H%M')}"
+        
+        if st.button("💾 SALVA E CHIUDI", type="primary", use_container_width=True):
+            if not cli_obj: 
+                st.error("Seleziona un cliente!")
             else:
+                # Preparazione Testata per il DB
+                testata = {
+                    "id_cliente": cli_obj['id'], 
+                    "ragione_sociale_cliente": cli_obj['ragione_sociale'], 
+                    "id_agente": str(user_data.get("agente_corrispondente", "")), 
+                    "totale_netto": tot_n, 
+                    "note_generali": note_finali, 
+                    "data_consegna": str(data_cons) if data_cons else None, 
+                    "riferimento": rif_ordine, 
+                    "numero_preventivo": num_prev,
+                    "stato": stato_documento,
+                    "inviato": False
+                }
+
                 ok, res = salva_preventivo_db(testata, st.session_state.righe_preventivo)
                 if ok:
-                    st.success("✅ Salvato!"); time.sleep(1.5); st.session_state.righe_preventivo = []; st.session_state.cliente_selezionato_obj = None; st.rerun()
-                else: st.error(f"Errore: {res}")
+                    st.success(f"✅ {stato_documento} Salvato con successo!")
+                    time.sleep(1.2)
+                    st.session_state.righe_preventivo = []
+                    st.session_state.cliente_selezionato_obj = None
+                    st.rerun()
+                else: 
+                    st.error(f"Errore nel salvataggio: {res}")
 
 if __name__ == "__main__":
     show_preventivi()

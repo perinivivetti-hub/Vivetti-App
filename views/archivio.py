@@ -70,10 +70,19 @@ def carica_preventivo(id_preventivo):
     return testata.data, session_righe
 
 def trasforma_in_ordine(id_preventivo):
+    """
+    Trasforma il preventivo in ordine e aggiorna la data created_at
+    al momento esatto della conversione.
+    """
     try:
-        supabase.table("preventivi_testata").update({"stato": "Ordine"}).eq("id", id_preventivo).execute()
+        ora_attuale = datetime.now().isoformat()
+        supabase.table("preventivi_testata").update({
+            "stato": "Ordine",
+            "created_at": ora_attuale  # Aggiornamento timestamp
+        }).eq("id", id_preventivo).execute()
         return True
-    except Exception as e: return str(e)
+    except Exception as e: 
+        return str(e)
 
 def aggiorna_preventivo_db(id_preventivo, info_testata, righe):
     try:
@@ -131,7 +140,6 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
     pdf.ln(); pdf.set_font("Arial", '', 8)
 
     for r in righe:
-        # --- FIX PAGE BREAK ---
         if pdf.get_y() > 250:
             pdf.add_page()
             pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
@@ -146,12 +154,10 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
             p_l, p_u = float(r['PREZZO_LORDO']), (0.0 if r['SCONTO_MERCE'] else float(r['PREZZO_NETTO']))
             s_str = "OMAGGIO" if r['SCONTO_MERCE'] else format_sconti_string(r['S1'], r['S2'], r['S3'])
             
-            # Limite caratteri descrizione
             desc_testo = str(r['DESCRIZIONE'])
             if len(desc_testo) > 250: desc_testo = desc_testo[:247] + "..."
             if r.get('NOTA'): desc_testo += f"\nNote: {r['NOTA']}"
             
-            # Calcolo altezza dinamica cella
             y_before = pdf.get_y()
             pdf.set_xy(45, y_before)
             pdf.multi_cell(55, 5, desc_testo, border=0, align='L')
@@ -190,6 +196,7 @@ def show_archivio():
         with col_f1:
             filtro_cliente_id = st_searchbox(search_clients_arc, key="filtro_cliente_archivio", placeholder="🔍 Filtra per cliente...")
         
+        # Carichiamo solo i documenti che NON sono ordini
         query = supabase.table("preventivi_testata").select("*").neq("stato", "Ordine")
         if user_data.get("ruolo") == "agente":
             query = query.eq("id_agente", str(user_data.get("agente_corrispondente")))
@@ -199,13 +206,12 @@ def show_archivio():
         prev_data = query.order("created_at", desc=True).limit(50).execute()
         
         if not prev_data.data:
-            st.info("Nessun documento trovato.")
+            st.info("Nessun preventivo in bozza trovato.")
         else:
             for row in prev_data.data:
                 data_f = datetime.fromisoformat(row['created_at'].replace('Z', '+00:00')).strftime('%d/%m/%Y')
                 label = f"📄 {row['numero_preventivo']} | {row['ragione_sociale_cliente']} | € {row['totale_netto']:,.2f} | {data_f}"
                 
-                # Controllo se questo expander deve restare aperto
                 is_open = st.session_state.opened_expander_id == row['id']
                 
                 with st.expander(label, expanded=is_open):
@@ -219,13 +225,12 @@ def show_archivio():
                         st.session_state.righe_archivio = righe
                         st.rerun()
                     
-                    # --- LOGICA PDF iOS-SAFE + AUTO-OPEN ---
                     pdf_key = f"pdf_ready_{row['id']}"
                     if pdf_key not in st.session_state: st.session_state[pdf_key] = None
 
                     if c_pdf.button("📄 PDF", key=f"btn_gen_{row['id']}", use_container_width=True):
                         with st.spinner("..."):
-                            st.session_state.opened_expander_id = row['id'] # Salva posizione
+                            st.session_state.opened_expander_id = row['id'] 
                             _, r_pdf = carica_preventivo(row['id'])
                             pdf_bytes = genera_pdf_ordine(row['ragione_sociale_cliente'], row, r_pdf)
                             st.session_state[pdf_key] = base64.b64encode(pdf_bytes).decode()
@@ -240,7 +245,7 @@ def show_archivio():
                                    target="_blank" 
                                    download="{file_n}" 
                                    style="color: #ff4b4b; text-decoration: none; font-weight: bold; font-size: 14px;">
-                                    ⬇️ SCARICA
+                                   ⬇️ SCARICA
                                 </a>
                             </div>
                         """
@@ -248,16 +253,19 @@ def show_archivio():
 
                     if c_ord.button("🛒 ORDINE", key=f"ord_{row['id']}", use_container_width=True):
                         st.session_state.opened_expander_id = None
-                        if trasforma_in_ordine(row['id']) is True:
-                            st.toast("Convertito in ordine!", icon="✅")
+                        risultato = trasforma_in_ordine(row['id'])
+                        if risultato is True:
+                            st.success("✅ Convertito in ordine e data aggiornata!")
                             time.sleep(1); st.rerun()
+                        else:
+                            st.error(f"Errore: {risultato}")
 
                     if c_del.button("🗑️ DEL", key=f"del_{row['id']}", use_container_width=True, type="secondary"):
                         supabase.table("preventivi_testata").delete().eq("id", row['id']).execute()
                         st.rerun()
 
     else:
-        # --- SEZIONE EDIT ---
+        # --- SEZIONE EDIT (Invariata ma inclusa per completezza) ---
         st.info(f"Modifica Documento: **{st.session_state.edit_testata['numero_preventivo']}**")
         if st.button("⬅️ ANNULLA E TORNA INDIETRO"):
             st.session_state.edit_id = None; st.rerun()
@@ -299,7 +307,9 @@ def show_archivio():
                     pl = cp1.number_input("Lordo", value=float(item.get('PREZZO', item.get('PREZZO_LORDO', 0.0))))
                     qta = cp2.number_input("Q.tà", min_value=1, value=int(item.get('QTA', 1)))
                     cs1, cs2, cs3 = st.columns(3)
-                    s1, s2, s3 = cs1.number_input("S1", value=float(item.get('S1', item.get('SCONTO1', 0)))), cs2.number_input("S2", value=float(item.get('S2', item.get('SCONTO2', 0)))), cs3.number_input("S3", value=float(item.get('S3', item.get('SCONTO3', 0))))
+                    s1 = cs1.number_input("S1", value=float(item.get('S1', item.get('SCONTO1', 0.0))))
+                    s2 = cs2.number_input("S2", value=float(item.get('S2', item.get('SCONTO2', 0.0))))
+                    s3 = cs3.number_input("S3", value=float(item.get('S3', item.get('SCONTO3', 0.0))))
                     pn = calcola_netto(pl, s1, s2, s3)
                     if st.button("SALVA RIGA"):
                         st.session_state.righe_archivio.append({"CODICE": item["CODICE"], "DESCRIZIONE": item["DESCRIZIONE"], "PREZZO_LORDO": pl, "PREZZO_NETTO": pn, "QTA": qta, "SCONTO_MERCE": False, "S1": s1, "S2": s2, "S3": s3, "NOTA": ""})

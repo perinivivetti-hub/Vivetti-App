@@ -44,6 +44,7 @@ def duplica_ordine(id_originale, supabase):
     
     new_t['numero_preventivo'] = f"{old_t['numero_preventivo']}_COPY"
     new_t['stato'] = "Preventivo" 
+    new_t['inviato'] = False 
     
     ins_t = supabase.table("preventivi_testata").insert(new_t).execute()
     if not ins_t.data:
@@ -121,7 +122,6 @@ def genera_pdf_conferma(cliente_ragione_sociale, testata, righe, priorita=""):
     pdf.set_font("Arial", '', 8)
 
     for r in righe:
-        # --- FIX PAGE BREAK ---
         if pdf.get_y() > 250:
             pdf.add_page()
             pdf.set_font("Arial", 'B', 8)
@@ -169,42 +169,86 @@ def genera_pdf_conferma(cliente_ragione_sociale, testata, righe, priorita=""):
 
 def genera_pdf_riepilogo_giornaliero(anno, df_stats):
     pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, f"RIEPILOGO ACQUISIZIONE ORDINI - ANNO {anno}", ln=True, align='C')
-    pdf.ln(10)
-    
-    df_stats['data_creazione'] = pd.to_datetime(df_stats['created_at']).dt.date
-    riepilogo = df_stats.groupby('data_creazione').agg(
-        num_ordini=('totale_netto', 'count'), 
-        totale_giorno=('totale_netto', 'sum')
-    ).sort_index(ascending=True)
-    
-    pdf.set_font("Arial", 'B', 10)
-    pdf.set_fill_color(230, 230, 230)
-    pdf.cell(60, 8, "DATA CREAZIONE", 1, 0, 'C', True)
-    pdf.cell(60, 8, "NUM. ORDINI", 1, 0, 'C', True)
-    pdf.cell(60, 8, "TOTALE NETTO (EUR)", 1, 1, 'C', True)
-    
-    pdf.set_font("Arial", '', 10)
-    totale_annuo = 0
-    for data, row in riepilogo.iterrows():
-        pdf.cell(60, 8, data.strftime('%d/%m/%Y'), 1, 0, 'C')
-        pdf.cell(60, 8, str(int(row['num_ordini'])), 1, 0, 'C')
-        pdf.cell(60, 8, f"{row['totale_giorno']:,.2f}", 1, 1, 'R')
-        totale_annuo += row['totale_giorno']
-        
+    pdf.cell(0, 10, f"RIEPILOGO ORDINI PER MESE - ANNO {anno}", ln=True, align='C')
     pdf.ln(5)
-    pdf.set_font("Arial", 'B', 11)
-    pdf.cell(120, 10, "TOTALE COMPLESSIVO ACQUISITO", 0, 0, 'R')
-    pdf.cell(60, 10, f"EUR {totale_annuo:,.2f}", 1, 1, 'R')
+    
+    df_stats['data_dt'] = pd.to_datetime(df_stats['created_at'])
+    df_stats['mese_num'] = df_stats['data_dt'].dt.month
+    df_stats['giorno'] = df_stats['data_dt'].dt.date
+    
+    mesi_nomi = {
+        1:'Gennaio', 2:'Febbraio', 3:'Marzo', 4:'Aprile', 5:'Maggio', 6:'Giugno',
+        7:'Luglio', 8:'Agosto', 9:'Settembre', 10:'Ottobre', 11:'Novembre', 12:'Dicembre'
+    }
+
+    totale_annuo = 0
+    for mese_idx in sorted(df_stats['mese_num'].unique()):
+        df_mese = df_stats[df_stats['mese_num'] == mese_idx]
+        
+        if pdf.get_y() > 240:
+            pdf.add_page()
+
+        pdf.set_font("Arial", 'B', 12)
+        pdf.set_fill_color(200, 220, 255) 
+        pdf.cell(0, 10, f"MESE: {mesi_nomi[mese_idx].upper()}", 1, 1, 'L', True)
+        
+        pdf.set_font("Arial", 'B', 9)
+        pdf.set_fill_color(240, 240, 240)
+        pdf.cell(60, 7, "DATA", 1, 0, 'C', True)
+        pdf.cell(60, 7, "NUM. ORDINI", 1, 0, 'C', True)
+        pdf.cell(60, 7, "TOTALE GIORNO (EUR)", 1, 1, 'C', True)
+        
+        pdf.set_font("Arial", '', 9)
+        riepilogo_giorni = df_mese.groupby('giorno').agg(
+            num_ordini=('totale_netto', 'count'),
+            totale_giorno=('totale_netto', 'sum')
+        ).sort_index()
+        
+        totale_mese = 0
+        for data, row in riepilogo_giorni.iterrows():
+            if pdf.get_y() > 275:
+                pdf.add_page()
+                pdf.set_font("Arial", 'B', 8)
+                pdf.cell(60, 7, "DATA (cont.)", 1, 0, 'C', True)
+                pdf.cell(60, 7, "NUM. ORDINI", 1, 0, 'C', True)
+                pdf.cell(60, 7, "TOTALE GIORNO", 1, 1, 'C', True)
+                pdf.set_font("Arial", '', 9)
+
+            pdf.cell(60, 7, data.strftime('%d/%m/%Y'), 1, 0, 'C')
+            pdf.cell(60, 7, str(int(row['num_ordini'])), 1, 0, 'C')
+            pdf.cell(60, 7, f"{row['totale_giorno']:,.2f}", 1, 1, 'R')
+            totale_mese += row['totale_giorno']
+        
+        if pdf.get_y() > 270:
+            pdf.add_page()
+
+        pdf.set_font("Arial", 'B', 10)
+        pdf.set_fill_color(245, 245, 245)
+        pdf.cell(120, 8, f"TOTALE {mesi_nomi[mese_idx].upper()}", 1, 0, 'R', True)
+        pdf.cell(60, 8, f"{totale_mese:,.2f}", 1, 1, 'R', True)
+        pdf.ln(5)
+        totale_annuo += totale_mese
+
+    if pdf.get_y() > 250:
+        pdf.add_page()
+
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 13)
+    pdf.set_fill_color(34, 197, 94)
+    pdf.set_text_color(255, 255, 255)
+    pdf.cell(120, 12, "TOTALE COMPLESSIVO ANNUALE", 1, 0, 'R', True)
+    pdf.cell(60, 12, f"EUR {totale_annuo:,.2f}", 1, 1, 'R', True)
+    
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 # --- 3. FUNZIONE PRINCIPALE ---
 def show_ordinato():
     st.subheader("📦 Archivio Ordini")
     
-    # Inizializzazione Session State per persistenza expander
     if 'opened_expander_id' not in st.session_state:
         st.session_state.opened_expander_id = None
     
@@ -230,14 +274,14 @@ def show_ordinato():
 
     if not df_stats.empty:
         ordine_mesi = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic', 'Senza Data']
-        mesi_nomi = {1:'Gen', 2:'Feb', 3:'Mar', 4:'Apr', 5:'Mag', 6:'Giu', 7:'Lug', 8:'Ago', 9:'Set', 10:'Ott', 11:'Nov', 12:'Dic'}
+        mesi_nomi_short = {1:'Gen', 2:'Feb', 3:'Mar', 4:'Apr', 5:'Mag', 6:'Giu', 7:'Lug', 8:'Ago', 9:'Set', 10:'Ott', 11:'Nov', 12:'Dic'}
         
         totali = {m: 0.0 for m in ordine_mesi}
         for _, row in df_stats.iterrows():
             try:
                 if row.get('data_consegna'):
                     m_idx = datetime.strptime(str(row['data_consegna']), '%Y-%m-%d').month
-                    totali[mesi_nomi[m_idx]] += float(row['totale_netto'])
+                    totali[mesi_nomi_short[m_idx]] += float(row['totale_netto'])
                 else:
                     totali["Senza Data"] += float(row['totale_netto'])
             except:
@@ -252,7 +296,6 @@ def show_ordinato():
         st.write("---")
         c_rep1, _ = st.columns([1.2, 2])
         with c_rep1:
-            # Report giornaliero iOS-Safe
             rep_key = f"rep_ready_{anno_sel}"
             if st.button("📊 GENERA REPORT ACQUISIZIONE", use_container_width=True):
                 with st.spinner("Generazione..."):
@@ -296,25 +339,38 @@ def show_ordinato():
         st.write(f"Trovati **{len(res_list.data)}** ordini")
         for row in res_list.data:
             dt_c = row['data_consegna'] if row['data_consegna'] else "NON SETTATA"
-            label = f"📦 {row['numero_preventivo']} | {row['ragione_sociale_cliente']} | Consegna: {dt_c} | € {row['totale_netto']:,.2f}"
             
-            # Controllo se questo expander deve restare aperto
+            # --- STATO INVIATO ---
+            is_inviato = row.get('inviato', False)
+            status_icon = "✅" if is_inviato else "⏳"
+            
+            label = f"{status_icon} {row['numero_preventivo']} | {row['ragione_sociale_cliente']} | Consegna: {dt_c} | € {row['totale_netto']:,.2f}"
             is_open = st.session_state.opened_expander_id == row['id']
             
             with st.expander(label, expanded=is_open):
-                priorita_sel = st.radio(
-                    "Priorità per il documento:", 
-                    ["STANDARD", "URGENTE", "APPENA DISPONIBILE"], 
-                    index=0, horizontal=True, key=f"prio_{row['id']}"
-                )
-                st.write("")
+                # Usiamo le colonne per compattare priorità e checkbox inviato
+                col_prio, col_inv = st.columns([3, 1])
+                
+                with col_prio:
+                    priorita_sel = st.radio(
+                        "Priorità documento:", 
+                        ["STANDARD", "URGENTE", "APPENA DISPONIBILE"], 
+                        index=0, horizontal=True, key=f"prio_{row['id']}"
+                    )
+                
+                with col_inv:
+                    st.write("") # Allineamento verticale approssimativo
+                    check_inv = st.checkbox("Segna come Inviato", value=is_inviato, key=f"inv_{row['id']}")
+                    if check_inv != is_inviato:
+                        supabase.table("preventivi_testata").update({"inviato": check_inv}).eq("id", row['id']).execute()
+                        st.toast(f"Stato ordine {row['numero_preventivo']} aggiornato!")
+                        time.sleep(0.5)
+                        st.rerun()
+
+                st.divider()
                 c1, c2, c3, c4 = st.columns(4)
                 
-                # --- LOGICA PDF iOS-SAFE ---
                 pdf_key = f"pdf_ord_ready_{row['id']}"
-                if pdf_key not in st.session_state: 
-                    st.session_state[pdf_key] = None
-
                 if c1.button("📄 PDF", key=f"btn_pdf_{row['id']}", use_container_width=True):
                     with st.spinner("Generazione..."):
                         st.session_state.opened_expander_id = row['id']
