@@ -114,16 +114,35 @@ def calcola_netto(listino, s1, s2, s3):
     return float(listino) * (1 - float(s1 or 0)/100) * (1 - float(s2 or 0)/100) * (1 - float(s3 or 0)/100)
 
 def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
+    # Funzione interna per sostituire i caratteri speciali con uno spazio
+    def pulisci_testo(testo):
+        if not testo:
+            return ""
+        # Encode in latin-1 con 'replace' mette un '?' sui caratteri non supportati
+        # Poi decodifichiamo e sostituiamo il '?' con uno spazio
+        temp = str(testo).encode('latin-1', 'replace').decode('latin-1')
+        return temp.replace('?', ' ')
+
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     logo_path = 'LogoVivetti.png'
     if os.path.exists(logo_path): pdf.image(logo_path, x=10, y=8, w=45) 
     
     pdf.set_font("Arial", 'B', 15); pdf.set_y(12)
-    pdf.cell(0, 10, f"OFFERTA: {testata['numero_preventivo']}", ln=True, align='R')
-    pdf.ln(18); pdf.set_font("Arial", '', 10)
-    pdf.cell(0, 6, f"SPETT.LE CLIENTE: {cliente_ragione_sociale}", ln=True)
-    pdf.cell(100, 6, f"RIFERIMENTO: {testata['riferimento'] if testata['riferimento'] else '-'}", ln=False)
+    pdf.cell(0, 10, pulisci_testo(f"OFFERTA: {testata['numero_preventivo']}"), ln=True, align='R')
+    
+    pdf.ln(18)
+    # --- GRASSETTO: Cliente ---
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 6, pulisci_testo(f"SPETT.LE CLIENTE: {cliente_ragione_sociale}"), ln=True)
+    
+    # --- GRASSETTO: Riferimento ---
+    pdf.set_font("Arial", 'B', 10)
+    rif_val = testata['riferimento'] if testata['riferimento'] else '-'
+    pdf.cell(100, 6, pulisci_testo(f"RIFERIMENTO: {rif_val}"), ln=False)
+    
+    # Data Emissione (normale)
+    pdf.set_font("Arial", '', 10)
     pdf.cell(0, 6, f"DATA EMISSIONE: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='R')
     
     consegna_str = "-"
@@ -131,8 +150,9 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
         try: consegna_str = datetime.strptime(str(testata['data_consegna']), '%Y-%m-%d').strftime('%d/%m/%Y')
         except: consegna_str = str(testata['data_consegna'])
             
+    # --- GRASSETTO: Consegna ---
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(100, 6, f"CONSEGNA PREVISTA: {consegna_str}", ln=True)
+    pdf.cell(100, 6, pulisci_testo(f"CONSEGNA PREVISTA: {consegna_str}"), ln=True)
     
     pdf.ln(8); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
     cols = [("CODICE", 35), ("DESCRIZIONE", 55), ("Q.TA", 10), ("PREZZO U.", 20), ("SCONTI", 20), ("NETTO U.", 20), ("TOTALE", 20)]
@@ -148,15 +168,17 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
 
         if r.get('tipo') == 'NOTA_TESTO':
             pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(245, 245, 245)
-            pdf.multi_cell(180, 8, r['DESCRIZIONE'].upper(), border=1, align='L', fill=True)
+            testo_nota = pulisci_testo(r['DESCRIZIONE']).upper()
+            pdf.multi_cell(180, 8, testo_nota, border=1, align='L', fill=True)
             pdf.set_font("Arial", '', 8)
         else:
             p_l, p_u = float(r['PREZZO_LORDO']), (0.0 if r['SCONTO_MERCE'] else float(r['PREZZO_NETTO']))
             s_str = "OMAGGIO" if r['SCONTO_MERCE'] else format_sconti_string(r['S1'], r['S2'], r['S3'])
             
-            desc_testo = str(r['DESCRIZIONE'])
+            # --- PULIZIA: Descrizione e Note ---
+            desc_testo = pulisci_testo(r['DESCRIZIONE'])
             if len(desc_testo) > 250: desc_testo = desc_testo[:247] + "..."
-            if r.get('NOTA'): desc_testo += f"\nNote: {r['NOTA']}"
+            if r.get('NOTA'): desc_testo += pulisci_testo(f"\nNote: {r['NOTA']}")
             
             y_before = pdf.get_y()
             pdf.set_xy(45, y_before)
@@ -164,19 +186,21 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
             h = max(pdf.get_y() - y_before, 8)
             
             pdf.set_xy(10, y_before)
-            pdf.cell(35, h, str(r['CODICE']), border=1, align='C')
+            pdf.cell(35, h, pulisci_testo(r['CODICE']), border=1, align='C')
             pdf.set_xy(45, y_before)
             pdf.multi_cell(55, 5, desc_testo, border=1, align='L')
             pdf.set_xy(100, y_before)
             pdf.cell(10, h, str(r['QTA']), border=1, align='C')
             pdf.cell(20, h, f"{p_l:,.2f}", border=1, align='R')
-            pdf.cell(20, h, s_str, border=1, align='C')
+            pdf.cell(20, h, pulisci_testo(s_str), border=1, align='C')
             pdf.cell(20, h, f"{p_u:,.2f}", border=1, align='R')
             pdf.cell(20, h, f"{(p_u * r['QTA']):,.2f}", border=1, ln=1, align='R')
             
+    # --- GRASSETTO E DICITURA: Totale ---
     pdf.ln(5); pdf.set_font("Arial", 'B', 12)
     pdf.cell(160, 10, "TOTALE NETTO (IVA ESCLUSA)", 0, 0, 'R')
     pdf.cell(30, 10, f"EUR {testata['totale_netto']:,.2f}", 0, 1, 'R')
+    
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
 # --- 5. INTERFACCIA PRINCIPALE ---
