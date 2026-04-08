@@ -74,11 +74,8 @@ def calcola_netto(listino, s1, s2, s3):
 # --- 4. SALVATAGGIO DB ---
 def salva_preventivo_db(info_testata, righe):
     try:
-        # Inserimento Testata
         res_t = supabase.table("preventivi_testata").insert(info_testata).execute()
         id_prev = res_t.data[0]['id']
-        
-        # Preparazione Righe
         righe_db = [{
             "id_preventivo": id_prev, 
             "codice_articolo": r.get('CODICE', 'NOTA'), 
@@ -90,7 +87,6 @@ def salva_preventivo_db(info_testata, righe):
             "prezzo_netto_unitario": r.get('PREZZO_NETTO', 0), 
             "nota_riga": r.get('tipo', '') 
         } for r in righe]
-        
         supabase.table("preventivi_righe").insert(righe_db).execute()
         return True, id_prev
     except Exception as e: 
@@ -106,11 +102,17 @@ def show_preventivi():
     user_data = st.session_state.get('user_info', {})
     st.subheader("📝 Nuova Offerta")
 
-    # --- RICERCA CLIENTI ---
+    # --- 5.1 ANAGRAFICA (In alto) ---
     with st.expander("👤 Anagrafica", expanded=not bool(st.session_state.righe_preventivo)):
-        cliente_sel = st_searchbox(search_clients, placeholder="🔍 Cerca cliente in rubrica...", key="search_cliente_prev")
-        if cliente_sel: 
-            st.session_state.cliente_selezionato_obj = cliente_sel
+        is_nuovo = st.checkbox("🆕 Nuovo cliente (non ancora in rubrica)")
+        if is_nuovo:
+            rag_manuale = st.text_input("Ragione Sociale Nuovo Cliente", placeholder="Inserisci nome completo...")
+            if rag_manuale:
+                st.session_state.cliente_selezionato_obj = {"id": None, "ragione_sociale": rag_manuale.upper()}
+        else:
+            cliente_sel = st_searchbox(search_clients, placeholder="🔍 Cerca cliente in rubrica...", key="search_cliente_prev")
+            if cliente_sel: 
+                st.session_state.cliente_selezionato_obj = cliente_sel
             
         c1, c2 = st.columns(2)
         data_cons = c1.date_input("Data consegna", value=None, format="DD/MM/YYYY")
@@ -122,11 +124,39 @@ def show_preventivi():
 
     st.divider()
 
-    # --- RICERCA ARTICOLI ---
-    st.subheader("🔍 Ricerca Articoli")
+    # --- 5.2 RIEPILOGO (SPOSTATO AL CENTRO) ---
+    tot_n = 0.0
+    if st.session_state.righe_preventivo:
+        st.subheader("📊 Riepilogo")
+        for idx, riga in enumerate(st.session_state.righe_preventivo):
+            if riga.get('tipo') == 'NOTA_TESTO':
+                with st.container():
+                    st.markdown(f'<div class="note-card"><b>🗒️ NOTA:</b> {riga["DESCRIZIONE"]}</div>', unsafe_allow_html=True)
+                    col_b = st.columns([9, 0.5, 0.5])
+                    if col_b[1].button("✏️", key=f"edit_n_{idx}"):
+                        st.session_state.temp_item = st.session_state.righe_preventivo.pop(idx); st.rerun()
+                    if col_b[2].button("🗑️", key=f"del_n_{idx}"):
+                        st.session_state.righe_preventivo.pop(idx); st.rerun()
+            else:
+                with st.container(border=True):
+                    ci, cv, c_btns = st.columns([3, 1, 0.8])
+                    val_r = 0 if riga['SCONTO_MERCE'] else (riga['PREZZO_NETTO'] * riga['QTA'])
+                    tot_n += val_r
+                    ci.markdown(f"**{riga['CODICE']}** - {riga['DESCRIZIONE']}")
+                    ci.caption(f"Qta: {riga['QTA']} | Sconti: {format_sconti_string(riga['S1'], riga['S2'], riga['S3'])}")
+                    cv.markdown(f"**€ {val_r:,.2f}**")
+                    b1, b2 = c_btns.columns(2)
+                    if b1.button("✏️", key=f"edit_{idx}"):
+                        st.session_state.temp_item = st.session_state.righe_preventivo.pop(idx); st.rerun()
+                    if b2.button("🗑️", key=f"del_{idx}"):
+                        st.session_state.righe_preventivo.pop(idx); st.rerun()
+        st.divider()
+
+    # --- 5.3 RICERCA ARTICOLI (ORA SOTTO AL RIEPILOGO) ---
+    st.subheader("🔍 Aggiungi Articolo o Nota")
     col_search, col_m, col_n = st.columns([0.7, 0.15, 0.15], gap="small", vertical_alignment="bottom")
     with col_search:
-        selected_article = st_searchbox(search_articles, placeholder="Scrivi almeno 3 caratteri...", key=f"search_art_{st.session_state.search_key}", clear_on_submit=True)
+        selected_article = st_searchbox(search_articles, placeholder="Cerca codice o descrizione...", key=f"search_art_{st.session_state.search_key}", clear_on_submit=True)
     with col_m:
         if st.button("➕ Manuale", use_container_width=True):
             st.session_state.temp_item = {"CODICE": "EXTRA", "DESCRIZIONE": "", "PREZZO": 0.0, "is_manual": True}
@@ -139,7 +169,7 @@ def show_preventivi():
     if selected_article: 
         st.session_state.temp_item = selected_article
 
-    # --- SCHEDA CONFIGURAZIONE RIGA ---
+    # --- 5.4 SCHEDA CONFIGURAZIONE RIGA (In fondo) ---
     if st.session_state.temp_item:
         item = st.session_state.temp_item
         with st.container():
@@ -193,48 +223,15 @@ def show_preventivi():
                 if cann.button("Annulla", use_container_width=True): st.session_state.temp_item = None; st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- RIEPILOGO ---
+    # --- 5.5 BLOCCO FINALE: NOTE E SALVATAGGIO ---
     if st.session_state.righe_preventivo:
-        st.subheader("📊 Riepilogo")
-        tot_n = 0.0
-        for idx, riga in enumerate(st.session_state.righe_preventivo):
-            if riga.get('tipo') == 'NOTA_TESTO':
-                with st.container():
-                    st.markdown(f'<div class="note-card"><b>🗒️ NOTA:</b> {riga["DESCRIZIONE"]}</div>', unsafe_allow_html=True)
-                    col_b = st.columns([9, 0.5, 0.5])
-                    if col_b[1].button("✏️", key=f"edit_n_{idx}"):
-                        st.session_state.temp_item = st.session_state.righe_preventivo.pop(idx); st.rerun()
-                    if col_b[2].button("🗑️", key=f"del_n_{idx}"):
-                        st.session_state.righe_preventivo.pop(idx); st.rerun()
-            else:
-                with st.container(border=True):
-                    ci, cv, c_btns = st.columns([3, 1, 0.8])
-                    val_r = 0 if riga['SCONTO_MERCE'] else (riga['PREZZO_NETTO'] * riga['QTA'])
-                    tot_n += val_r
-                    ci.markdown(f"**{riga['CODICE']}** - {riga['DESCRIZIONE']}")
-                    ci.caption(f"Qta: {riga['QTA']} | Sconti: {format_sconti_string(riga['S1'], riga['S2'], riga['S3'])}")
-                    cv.markdown(f"**€ {val_r:,.2f}**")
-                    b1, b2 = c_btns.columns(2)
-                    if b1.button("✏️", key=f"edit_{idx}"):
-                        st.session_state.temp_item = st.session_state.righe_preventivo.pop(idx); st.rerun()
-                    if b2.button("🗑️", key=f"del_{idx}"):
-                        st.session_state.righe_preventivo.pop(idx); st.rerun()
-
         st.divider()
-        
-        # --- BLOCCO FINALE: NOTE E STATO ---
         cn, cm = st.columns([2, 1])
         note_finali = cn.text_area("Note finali (condizioni...)")
         cm.metric("TOTALE NETTO", f"€ {tot_n:,.2f}")
         
-        # Selezione Stato Documento
         col_st, _ = st.columns([1.5, 2])
-        stato_documento = col_st.selectbox(
-            "Salva come:", 
-            ["Preventivo", "Ordine"], 
-            index=0,
-            help="Seleziona 'Ordine' per vederlo direttamente nell'archivio ordini e statistiche."
-        )
+        stato_documento = col_st.selectbox("Salva come:", ["Preventivo", "Ordine"], index=0)
 
         cli_obj = st.session_state.cliente_selezionato_obj
         num_prev = f"PREV-{datetime.now().strftime('%y%m%d-%H%M')}"
@@ -243,9 +240,8 @@ def show_preventivi():
             if not cli_obj: 
                 st.error("Seleziona un cliente!")
             else:
-                # Preparazione Testata per il DB
                 testata = {
-                    "id_cliente": cli_obj['id'], 
+                    "id_cliente": cli_obj.get('id'), 
                     "ragione_sociale_cliente": cli_obj['ragione_sociale'], 
                     "id_agente": str(user_data.get("agente_corrispondente", "")), 
                     "totale_netto": tot_n, 

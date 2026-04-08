@@ -70,18 +70,54 @@ def carica_preventivo(id_preventivo):
     return testata.data, session_righe
 
 def trasforma_in_ordine(id_preventivo):
-    """
-    Trasforma il preventivo in ordine e aggiorna la data created_at
-    al momento esatto della conversione.
-    """
     try:
         ora_attuale = datetime.now().isoformat()
         supabase.table("preventivi_testata").update({
             "stato": "Ordine",
-            "created_at": ora_attuale  # Aggiornamento timestamp
+            "created_at": ora_attuale
         }).eq("id", id_preventivo).execute()
         return True
     except Exception as e: 
+        return str(e)
+
+def duplica_preventivo(id_preventivo_originale):
+    try:
+        # Recupera dati esistenti
+        testata, righe = carica_preventivo(id_preventivo_originale)
+        
+        # Genera nuovo numero (suffisso temporale per evitare duplicati ID)
+        nuovo_numero = f"{testata['numero_preventivo']}_CLONE_{datetime.now().strftime('%H%M%S')}"
+        
+        nuova_testata = {
+            "id_cliente": testata['id_cliente'],
+            "ragione_sociale_cliente": testata['ragione_sociale_cliente'],
+            "numero_preventivo": nuovo_numero,
+            "riferimento": f"COPIA: {testata['riferimento']}" if testata['riferimento'] else "COPIA",
+            "totale_netto": testata['totale_netto'],
+            "stato": "Bozza",
+            "id_agente": testata['id_agente'],
+            "data_consegna": testata['data_consegna']
+        }
+        
+        # Inserimento testata
+        res_t = supabase.table("preventivi_testata").insert(nuova_testata).execute()
+        nuovo_id = res_t.data[0]['id']
+        
+        # Inserimento righe
+        righe_db = [{
+            "id_preventivo": nuovo_id, 
+            "codice_articolo": r.get('CODICE', 'NOTA'), 
+            "descrizione": r['DESCRIZIONE'], 
+            "quantita": r.get('QTA', 0), 
+            "prezzo_lordo_unitario": r.get('PREZZO_LORDO', 0),
+            "sconto_1": r.get('S1', 0), "sconto_2": r.get('S2', 0), "sconto_3": r.get('S3', 0),
+            "is_sconto_merce": r.get('SCONTO_MERCE', False), "prezzo_netto_unitario": r.get('PREZZO_NETTO', 0), 
+            "nota_riga": r.get('tipo', r.get('NOTA', ''))
+        } for r in righe]
+        
+        supabase.table("preventivi_righe").insert(righe_db).execute()
+        return True
+    except Exception as e:
         return str(e)
 
 def aggiorna_preventivo_db(id_preventivo, info_testata, righe):
@@ -114,12 +150,8 @@ def calcola_netto(listino, s1, s2, s3):
     return float(listino) * (1 - float(s1 or 0)/100) * (1 - float(s2 or 0)/100) * (1 - float(s3 or 0)/100)
 
 def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
-    # Funzione interna per sostituire i caratteri speciali con uno spazio
     def pulisci_testo(testo):
-        if not testo:
-            return ""
-        # Encode in latin-1 con 'replace' mette un '?' sui caratteri non supportati
-        # Poi decodifichiamo e sostituiamo il '?' con uno spazio
+        if not testo: return ""
         temp = str(testo).encode('latin-1', 'replace').decode('latin-1')
         return temp.replace('?', ' ')
 
@@ -132,16 +164,13 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
     pdf.cell(0, 10, pulisci_testo(f"OFFERTA: {testata['numero_preventivo']}"), ln=True, align='R')
     
     pdf.ln(18)
-    # --- GRASSETTO: Cliente ---
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 6, pulisci_testo(f"SPETT.LE CLIENTE: {cliente_ragione_sociale}"), ln=True)
     
-    # --- GRASSETTO: Riferimento ---
     pdf.set_font("Arial", 'B', 10)
     rif_val = testata['riferimento'] if testata['riferimento'] else '-'
     pdf.cell(100, 6, pulisci_testo(f"RIFERIMENTO: {rif_val}"), ln=False)
     
-    # Data Emissione (normale)
     pdf.set_font("Arial", '', 10)
     pdf.cell(0, 6, f"DATA EMISSIONE: {datetime.now().strftime('%d/%m/%Y')}", ln=True, align='R')
     
@@ -150,7 +179,6 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
         try: consegna_str = datetime.strptime(str(testata['data_consegna']), '%Y-%m-%d').strftime('%d/%m/%Y')
         except: consegna_str = str(testata['data_consegna'])
             
-    # --- GRASSETTO: Consegna ---
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(100, 6, pulisci_testo(f"CONSEGNA PREVISTA: {consegna_str}"), ln=True)
     
@@ -175,7 +203,6 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
             p_l, p_u = float(r['PREZZO_LORDO']), (0.0 if r['SCONTO_MERCE'] else float(r['PREZZO_NETTO']))
             s_str = "OMAGGIO" if r['SCONTO_MERCE'] else format_sconti_string(r['S1'], r['S2'], r['S3'])
             
-            # --- PULIZIA: Descrizione e Note ---
             desc_testo = pulisci_testo(r['DESCRIZIONE'])
             if len(desc_testo) > 250: desc_testo = desc_testo[:247] + "..."
             if r.get('NOTA'): desc_testo += pulisci_testo(f"\nNote: {r['NOTA']}")
@@ -196,7 +223,6 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
             pdf.cell(20, h, f"{p_u:,.2f}", border=1, align='R')
             pdf.cell(20, h, f"{(p_u * r['QTA']):,.2f}", border=1, ln=1, align='R')
             
-    # --- GRASSETTO E DICITURA: Totale ---
     pdf.ln(5); pdf.set_font("Arial", 'B', 12)
     pdf.cell(160, 10, "TOTALE NETTO (IVA ESCLUSA)", 0, 0, 'R')
     pdf.cell(30, 10, f"EUR {testata['totale_netto']:,.2f}", 0, 1, 'R')
@@ -220,7 +246,6 @@ def show_archivio():
         with col_f1:
             filtro_cliente_id = st_searchbox(search_clients_arc, key="filtro_cliente_archivio", placeholder="🔍 Filtra per cliente...")
         
-        # Carichiamo solo i documenti che NON sono ordini
         query = supabase.table("preventivi_testata").select("*").neq("stato", "Ordine")
         if user_data.get("ruolo") == "agente":
             query = query.eq("id_agente", str(user_data.get("agente_corrispondente")))
@@ -239,16 +264,32 @@ def show_archivio():
                 is_open = st.session_state.opened_expander_id == row['id']
                 
                 with st.expander(label, expanded=is_open):
-                    c1, c_edit, c_pdf, c_ord, c_del = st.columns([1.6, 0.7, 0.7, 0.8, 0.7])
-                    c1.markdown(f"**Riferimento:** {row['riferimento'] or '-'}")
+                    # Usiamo 6 colonne uguali per garantire che i bottoni abbiano lo stesso spazio
+                    c1, c_edit, c_copy, c_pdf, c_ord, c_del = st.columns(6)
                     
+                    # Colonna 1: Info Riferimento
+                    c1.markdown(f"**Rif:** {row['riferimento'] or '-'}")
+                    
+                    # Pulsante EDIT
                     if c_edit.button("✏️ EDIT", key=f"ed_{row['id']}", use_container_width=True):
                         testata, righe = carica_preventivo(row['id'])
                         st.session_state.edit_id = row['id']
                         st.session_state.edit_testata = testata
                         st.session_state.righe_archivio = righe
                         st.rerun()
+
+                    # Pulsante COPIA
+                    if c_copy.button("👯 COPIA", key=f"cp_{row['id']}", use_container_width=True):
+                        with st.spinner("..."):
+                            res_copy = duplica_preventivo(row['id'])
+                            if res_copy is True:
+                                st.success("OK")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("Errore")
                     
+                    # Gestione PDF (Pulsante + Download link)
                     pdf_key = f"pdf_ready_{row['id']}"
                     if pdf_key not in st.session_state: st.session_state[pdf_key] = None
 
@@ -262,34 +303,27 @@ def show_archivio():
                     
                     if st.session_state[pdf_key]:
                         b64_data = st.session_state[pdf_key]
-                        file_n = f"{row['numero_preventivo']}.pdf"
                         pdf_link_html = f"""
-                            <div style="text-align: center; margin-top: 5px;">
-                                <a href="data:application/pdf;base64,{b64_data}" 
-                                   target="_blank" 
-                                   download="{file_n}" 
-                                   style="color: #ff4b4b; text-decoration: none; font-weight: bold; font-size: 14px;">
-                                   ⬇️ SCARICA
-                                </a>
-                            </div>
-                        """
+                            <div style="text-align: center;">
+                                <a href="data:application/pdf;base64,{b64_data}" target="_blank" download="{row['numero_preventivo']}.pdf" 
+                                   style="color: #ff4b4b; text-decoration: none; font-weight: bold; font-size: 12px;">⬇️ SCARICA</a>
+                            </div>"""
                         c_pdf.markdown(pdf_link_html, unsafe_allow_html=True)
 
+                    # Pulsante ORDINE
                     if c_ord.button("🛒 ORDINE", key=f"ord_{row['id']}", use_container_width=True):
                         st.session_state.opened_expander_id = None
                         risultato = trasforma_in_ordine(row['id'])
                         if risultato is True:
-                            st.success("✅ Convertito in ordine e data aggiornata!")
+                            st.success("OK")
                             time.sleep(1); st.rerun()
-                        else:
-                            st.error(f"Errore: {risultato}")
 
+                    # Pulsante DELETE
                     if c_del.button("🗑️ DEL", key=f"del_{row['id']}", use_container_width=True, type="secondary"):
                         supabase.table("preventivi_testata").delete().eq("id", row['id']).execute()
                         st.rerun()
 
     else:
-        # --- SEZIONE EDIT (Invariata ma inclusa per completezza) ---
         st.info(f"Modifica Documento: **{st.session_state.edit_testata['numero_preventivo']}**")
         if st.button("⬅️ ANNULLA E TORNA INDIETRO"):
             st.session_state.edit_id = None; st.rerun()

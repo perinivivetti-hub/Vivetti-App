@@ -404,7 +404,12 @@ def show_ordinato():
 
                 if st.session_state.get(pdf_key):
                     b64_data = st.session_state[pdf_key]
-                    file_n = f"Ordine_{row['numero_preventivo']}.pdf"
+                    
+                    # --- MODIFICA NOME FILE: Ragione Sociale + Riferimento ---
+                    rag_p = str(row['ragione_sociale_cliente']).strip().replace(" ", "_")
+                    rif_p = str(row['riferimento'] or "Ordine").strip().replace(" ", "_")
+                    file_n = f"{rag_p}_{rif_p}.pdf"
+                    
                     st.markdown(f'<div style="text-align:center;"><a href="data:application/pdf;base64,{b64_data}" target="_blank" download="{file_n}" style="color:#ff4b4b;text-decoration:none;font-weight:bold;">⬇️ SCARICA PDF</a></div>', unsafe_allow_html=True)
 
                 if c2.button("👯 COPIA", key=f"btn_dup_{row['id']}", use_container_width=True):
