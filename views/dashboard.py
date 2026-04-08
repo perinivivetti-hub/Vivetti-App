@@ -2,15 +2,16 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 
-# --- FUNZIONE CARICAMENTO CON CACHE SU DISCO ---
+# --- 1. FUNZIONE CARICAMENTO DATI CON FILTRO LATO SERVER ---
 @st.cache_data(persist="disk", ttl=3600)
-def load_all_data(url, key):
+def load_all_data(url, key, agente_id=None):
     from supabase import create_client
     supabase = create_client(url, key)
     
     placeholder = st.empty()
     with placeholder.container():
-        st.markdown("### 🔄 Sincronizzazione Database...")
+        testo_caricamento = f"Sincronizzazione Agente: {agente_id}" if agente_id else "Sincronizzazione Database Completo (Admin)"
+        st.markdown(f"### 🔄 {testo_caricamento}...")
         progress_bar = st.progress(0)
         status_text = st.empty()
     
@@ -20,15 +21,23 @@ def load_all_data(url, key):
     total_estimated = 80000 
 
     while True:
-        # La query include ora esplicitamente CodArt e Famiglia
-        response = supabase.table("fatturati").select(
+        # Query con selezione esplicita di tutte le colonne necessarie
+        query = supabase.table("fatturati").select(
             "AnnoRif,MeseRif,AgenteDoc,Cliente,ImportoNettoRiga,Merceologica,CodArt,IdAgenteDoc,Famiglia"
-        ).range(start, start + chunk_size - 1).execute()
+        )
+        
+        # Filtro lato Database (Supabase) per efficienza
+        if agente_id:
+            query = query.eq("IdAgenteDoc", agente_id)
+        
+        response = query.range(start, start + chunk_size - 1).execute()
         
         data = response.data
         if not data: break
+        
         all_data.extend(data)
         if len(data) < chunk_size: break
+        
         start += chunk_size
         progress_bar.progress(min(start / total_estimated, 1.0))
         status_text.markdown(f"Record recuperati: **{len(all_data):,}**")
@@ -43,24 +52,43 @@ def show_dashboard():
     
     user_data = st.session_state['user_info']
     my_agente_id = str(user_data.get("agente_corrispondente"))
+    ruolo = user_data.get("ruolo")
     
+    # Identificativo univoco per la gestione della cache utente
+    id_per_download = my_agente_id if ruolo == "agente" else None
+    current_cache_key = id_per_download if id_per_download else "ADMIN_FULL"
+
+    # Controllo cambio utente per svuotare la session_state
+    if 'last_loaded_key' not in st.session_state or st.session_state['last_loaded_key'] != current_cache_key:
+        if 'df_vendite' in st.session_state:
+            del st.session_state['df_vendite']
+        st.session_state['last_loaded_key'] = current_cache_key
+
+    # Caricamento effettivo
     if 'df_vendite' not in st.session_state:
-        df_raw = load_all_data(st.secrets["connections"]["supabase"]["url"], st.secrets["connections"]["supabase"]["key"])
+        df_raw = load_all_data(
+            st.secrets["connections"]["supabase"]["url"], 
+            st.secrets["connections"]["supabase"]["key"],
+            agente_id=id_per_download
+        )
         st.session_state['df_vendite'] = df_raw
     else:
         df_raw = st.session_state['df_vendite']
 
     if df_raw.empty:
-        st.warning("⚠️ Nessun dato trovato.")
+        st.warning("⚠️ Nessun dato trovato per l'utente corrente.")
         return
 
-    # --- 1. PULIZIA E NORMALIZZAZIONE ---
+    # --- 2. PULIZIA E NORMALIZZAZIONE INTEGRALE ---
     df_base = df_raw.copy()
     
+    # Rimozione articoli RAEE
     if "CodArt" in df_base.columns:
         df_base = df_base[~df_base["CodArt"].astype(str).str.upper().str.contains('RAEE', na=False)].copy()
     
     df_base["ImportoNettoRiga"] = pd.to_numeric(df_base["ImportoNettoRiga"], errors='coerce').fillna(0)
+    df_base["AnnoRif"] = pd.to_numeric(df_base["AnnoRif"], errors='coerce')
+    df_base["MeseRif"] = df_base["MeseRif"].astype(str).str.zfill(2)
     df_base["IdAgenteDoc"] = df_base["IdAgenteDoc"].astype(str)
     df_base["AgenteDoc"] = df_base["AgenteDoc"].astype(str).str.upper().str.strip()
     
@@ -70,23 +98,25 @@ def show_dashboard():
     else:
         df_base["Famiglia"] = "NON SPECIFICATO"
 
-    st.subheader("📊 Performance & Analisi Comparativa")
+    st.subheader(f"📊 Performance & Analisi")
     
-    # --- 2. SEZIONE FILTRI ---
+    # --- 3. SEZIONE FILTRI ---
     with st.container(border=True):
-        if user_data["ruolo"] != "agente":
+        if ruolo != "agente":
             f1, f2, f3 = st.columns([1.5, 1.5, 1.5])
         else:
             f1, f2 = st.columns(2)
             f3 = None
 
         with f1:
-            anni_disp = sorted(df_base["AnnoRif"].unique().tolist(), reverse=True)
-            anni_sel = st.multiselect("📅 Anni da confrontare", options=anni_disp, default=[anni_disp[0]])
+            anni_disp = sorted(df_base["AnnoRif"].dropna().unique().astype(int).tolist(), reverse=True)
+            default_anno = [2026] if 2026 in anni_disp else [anni_disp[0]]
+            anni_sel = st.multiselect("📅 Anni da confrontare", options=anni_disp, default=default_anno)
         
         with f2:
             mesi_disp = sorted(df_base["MeseRif"].unique().tolist())
-            mesi_sel = st.multiselect("📅 Mesi da includere", options=mesi_disp, default=mesi_disp)
+            mesi_default = [m for m in ['01', '02', '03'] if m in mesi_disp]
+            mesi_sel = st.multiselect("📅 Mesi da includere", options=mesi_disp, default=mesi_default if mesi_default else mesi_disp)
         
         agente_nome_sel = "Tutti"
         if f3 is not None:
@@ -95,50 +125,41 @@ def show_dashboard():
                 opzioni_agenti = ["Tutti"] + mappa_agenti["AgenteDoc"].tolist()
                 agente_nome_sel = st.selectbox("👤 Filtra per Agente", opzioni_agenti)
 
-    # --- 3. LOGICA DI FILTRAGGIO ---
+    # --- 4. LOGICA DI FILTRAGGIO FINALE ---
     df_final = df_base[df_base["AnnoRif"].isin(anni_sel)]
     if mesi_sel:
         df_final = df_final[df_final["MeseRif"].isin(mesi_sel)]
     
-    if user_data["ruolo"] == "agente":
-        df_final = df_final[df_final["IdAgenteDoc"] == my_agente_id]
-    elif agente_nome_sel != "Tutti":
+    if ruolo != "agente" and agente_nome_sel != "Tutti":
         id_scelto = mappa_agenti[mappa_agenti["AgenteDoc"] == agente_nome_sel]["IdAgenteDoc"].values[0]
         df_final = df_final[df_final["IdAgenteDoc"] == id_scelto]
 
-    # --- 4. VISUALIZZAZIONE DATI ---
+    # --- 5. VISUALIZZAZIONE DATI ---
     if not df_final.empty:
-        # Metriche Totali con calcolo variazione percentuale
+        # Metriche Totali con calcolo variazione percentuale (Delta)
         st.divider()
-        anni_ordinati = sorted(anni_sel) # Ordine cronologico per calcolo delta
+        anni_ordinati = sorted(anni_sel)
         cols_metric = st.columns(len(anni_ordinati))
 
         for i, anno in enumerate(anni_ordinati):
-            # Valore anno corrente
             val_attuale = df_final[df_final["AnnoRif"] == anno]["ImportoNettoRiga"].sum()
-            
             delta_val = None
             if i > 0:
-                # Valore anno precedente tra quelli selezionati
-                val_precedente = df_final[df_final["AnnoRif"] == anni_ordinati[i-1]]["ImportoNettoRiga"].sum()
-                if val_precedente > 0:
-                    variazione = ((val_attuale - val_precedente) / val_precedente) * 100
+                val_prec = df_final[df_final["AnnoRif"] == anni_ordinati[i-1]]["ImportoNettoRiga"].sum()
+                if val_prec > 0:
+                    variazione = ((val_attuale - val_prec) / val_prec) * 100
                     delta_val = f"{variazione:+.1f}% vs {anni_ordinati[i-1]}"
                 else:
                     delta_val = "N/A"
+            
+            cols_metric[i].metric(label=f"Totale {anno}", value=f"€ {val_attuale:,.2f}", delta=delta_val)
 
-            cols_metric[i].metric(
-                label=f"Totale {anno}", 
-                value=f"€ {val_attuale:,.2f}", 
-                delta=delta_val
-            )
-
-        # --- GRAFICO 1: ANDAMENTO MENSILE YoY ---
+        # GRAFICO 1: ANDAMENTO MENSILE YoY (Linee)
         st.divider()
         st.subheader("📈 Andamento Mensile Year-over-Year")
         res_mensile = df_final.groupby(["AnnoRif", "MeseRif"])["ImportoNettoRiga"].sum().reset_index()
         res_mensile["AnnoRif"] = res_mensile["AnnoRif"].astype(str)
-        nomi_mesi = {1: "Gen", 2: "Feb", 3: "Mar", 4: "Apr", 5: "Mag", 6: "Giu", 7: "Lug", 8: "Ago", 9: "Set", 10: "Ott", 11: "Nov", 12: "Dic"}
+        nomi_mesi = {"01":"Gen","02":"Feb","03":"Mar","04":"Apr","05":"Mag","06":"Giu","07":"Lug","08":"Ago","09":"Set","10":"Ott","11":"Nov","12":"Dic"}
         res_mensile["Mese"] = res_mensile["MeseRif"].map(nomi_mesi)
         res_mensile = res_mensile.sort_values("MeseRif")
 
@@ -151,10 +172,10 @@ def show_dashboard():
         fig_linea.update_layout(height=400, xaxis_title=None, legend=dict(orientation="h", y=1.1, x=1, title=None))
         st.plotly_chart(fig_linea, use_container_width=True)
 
-        # --- GRAFICO 2: PERFORMANCE AGENTI COMPARATIVA (Solo Admin) ---
-        if user_data["ruolo"] != "agente":
+        # GRAFICO 2: PERFORMANCE AGENTI (Solo Admin)
+        if ruolo != "agente":
             st.divider()
-            st.subheader("👤 Performance Agenti: Confronto Anni")
+            st.subheader("👤 Performance Agenti")
             res_agenti = df_final.groupby(["AgenteDoc", "AnnoRif"])["ImportoNettoRiga"].sum().reset_index()
             res_agenti["AnnoRif"] = res_agenti["AnnoRif"].astype(str)
             ordine_agenti = res_agenti.groupby("AgenteDoc")["ImportoNettoRiga"].sum().sort_values(ascending=False).index
@@ -169,50 +190,59 @@ def show_dashboard():
             fig_agenti.update_layout(height=500, xaxis_tickangle=-45, legend=dict(orientation="h", y=1.1, x=1, title=None))
             st.plotly_chart(fig_agenti, use_container_width=True)
 
-        # --- GRAFICO 3: DISTRIBUZIONE PER MARCHIO (FAMIGLIA) ---
+        # GRAFICO 3: DISTRIBUZIONE PER MARCHIO (FAMIGLIA) - ORDINATO CON IL PIÙ GRANDE IN ALTO
         st.divider()
         st.subheader("🏆 Distribuzione per Marchio")
         res_famiglia = df_final.groupby(["Famiglia", "AnnoRif"])["ImportoNettoRiga"].sum().reset_index()
         res_famiglia["AnnoRif"] = res_famiglia["AnnoRif"].astype(str)
-        ordine_famiglia = res_famiglia.groupby("Famiglia")["ImportoNettoRiga"].sum().sort_values(ascending=True).index
-
+        
         fig_famiglia = px.bar(
             res_famiglia, x="ImportoNettoRiga", y="Famiglia", color="AnnoRif",
-            barmode="group", orientation='h',
-            category_orders={"Famiglia": ordine_famiglia},
+            barmode="group", orientation='h', text_auto='.2s',
             template="plotly_white",
-            color_discrete_sequence=px.colors.qualitative.Bold, text_auto='.2s'
+            color_discrete_sequence=px.colors.qualitative.Bold
         )
-        fig_famiglia.update_layout(height=max(400, len(res_famiglia.Famiglia.unique())*35), yaxis_title=None)
+        # Il trucco per mettere il più grande in alto è l'asse Y con total ascending
+        fig_famiglia.update_layout(
+            height=max(400, len(res_famiglia.Famiglia.unique())*35), 
+            yaxis={'categoryorder':'total ascending', 'title': None},
+            legend=dict(orientation="h", y=1.02, x=1, title=None)
+        )
         st.plotly_chart(fig_famiglia, use_container_width=True)
 
-        # --- GRAFICO 4: CATEGORIE MERCEOLOGICHE ---
+        # GRAFICO 4: CATEGORIE MERCEOLOGICHE - ORDINATO CON IL PIÙ GRANDE IN ALTO
         st.divider()
         st.subheader("📦 Distribuzione per Categoria")
         res_merce = df_final.groupby(["Merceologica", "AnnoRif"])["ImportoNettoRiga"].sum().reset_index()
         res_merce["AnnoRif"] = res_merce["AnnoRif"].astype(str)
-        res_merce = res_merce.sort_values("ImportoNettoRiga", ascending=True)
 
         fig_merce = px.bar(
             res_merce, x="ImportoNettoRiga", y="Merceologica", color="AnnoRif",
-            barmode="group", orientation='h', 
-            color_discrete_sequence=px.colors.qualitative.Bold, text_auto='.2s'
+            barmode="group", orientation='h', text_auto='.2s',
+            template="plotly_white",
+            color_discrete_sequence=px.colors.qualitative.Bold
         )
-        fig_merce.update_layout(height=max(400, len(res_merce.Merceologica.unique())*40), yaxis_title=None)
+        fig_merce.update_layout(
+            height=max(400, len(res_merce.Merceologica.unique())*40),
+            yaxis={'categoryorder':'total ascending', 'title': None},
+            legend=dict(orientation="h", y=1.02, x=1, title=None)
+        )
         st.plotly_chart(fig_merce, use_container_width=True)
 
-        # --- GRAFICO 5: TOP 30 CLIENTI ---
+        # GRAFICO 5: TOP 30 CLIENTI - ORDINATO CON IL PIÙ GRANDE IN ALTO
         st.divider()
         st.subheader("🏙️ Top 30 Clienti per Fatturato")
         res_clienti = df_final.groupby("Cliente")["ImportoNettoRiga"].sum().sort_values(ascending=False).head(30).reset_index()
-        res_clienti = res_clienti.sort_values("ImportoNettoRiga", ascending=True)
 
         fig_clienti = px.bar(
             res_clienti, x="ImportoNettoRiga", y="Cliente", orientation='h',
             text_auto='.3s', color="ImportoNettoRiga", color_continuous_scale="Viridis",
             template="plotly_white"
         )
-        fig_clienti.update_layout(height=800, showlegend=False, coloraxis_showscale=False, yaxis_title=None)
+        fig_clienti.update_layout(
+            height=800, showlegend=False, coloraxis_showscale=False, 
+            yaxis={'categoryorder':'total ascending', 'title': None}
+        )
         st.plotly_chart(fig_clienti, use_container_width=True)
     
     else:
