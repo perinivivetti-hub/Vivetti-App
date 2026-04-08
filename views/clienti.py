@@ -52,7 +52,7 @@ def show_clienti():
         return df
 
     # --- 3. FILTRI DI INTERFACCIA ---
-    st.subheader("👥 Gestione e Analisi Clienti")
+    st.subheader("👥 Analisi Clienti")
     
     with st.container(border=True):
         cliente_id_sel = st_searchbox(search_clienti, key="sb_final_v4", placeholder="🔍 Cerca cliente...", label="🏢 Seleziona Cliente")
@@ -70,7 +70,7 @@ def show_clienti():
 
     # --- 4. RAGIONE SOCIALE ---
     res_info = conn.table("rubrica_clienti").select("ragione_sociale").eq("id_cliente", cliente_id_sel).single().execute()
-    st.header(f"🏢 {res_info.data['ragione_sociale'] if res_info.data else 'Scheda Cliente'}")
+    #st.header(f"🏢 {res_info.data['ragione_sociale'] if res_info.data else 'Scheda Cliente'}")
 
     # --- 5. CARICAMENTO DATI ---
     df_list = []
@@ -111,7 +111,7 @@ def show_clienti():
         fig_evol.update_layout(xaxis=dict(tickmode='array', tickvals=list(mesi_nomi.keys()), ticktext=list(mesi_nomi.values())), height=400)
         st.plotly_chart(fig_evol, use_container_width=True)
 
-        st.subheader("🏆 Comparazione per Marchio")
+        st.subheader("🏆 Marchi")
         res_fam = df.groupby(["Famiglia", "AnnoRif"])["ImportoNettoRiga"].sum().reset_index()
         top_fam_list = res_fam.groupby("Famiglia")["ImportoNettoRiga"].sum().nlargest(15).index
         df_fam_plot = res_fam[res_fam["Famiglia"].isin(top_fam_list)]
@@ -120,7 +120,7 @@ def show_clienti():
         fig_fam.update_layout(yaxis={'categoryorder':'total ascending'}, height=600)
         st.plotly_chart(fig_fam, use_container_width=True)
 
-        st.subheader("📊 Distribuzione Merceologica")
+        st.subheader("📊 Cat Merceologica")
         res_mer = df.groupby(["Merceologica", "AnnoRif"])["ImportoNettoRiga"].sum().reset_index()
         fig_mer = px.bar(res_mer, x="ImportoNettoRiga", y="Merceologica", color="AnnoRif", barmode="group", orientation='h', template="plotly_white")
         fig_mer.update_layout(yaxis={'categoryorder':'total ascending'}, height=600)
@@ -133,7 +133,7 @@ def show_clienti():
 
     # --- 7. DIARIO VISITE (DEMO IN FONDO) ---
     with st.container(border=True):
-        st.subheader("📒 Diario Visite (Anteprima)")
+        st.subheader("📒 Diario Visite")
         c_v1, c_v2 = st.columns([1, 2])
         with c_v1:
             st.date_input("Data Visita", value=date.today(), key="v_date_final_v4")
