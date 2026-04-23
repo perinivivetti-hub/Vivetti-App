@@ -61,6 +61,12 @@ def show_clienti():
             st.info("💡 Digita il nome di un cliente per iniziare."); return
 
         anni_disp = get_cliente_years(cliente_id_sel)
+        if cliente_id_sel:
+            st.sidebar.write(f"🔍 DEBUG Cliente Selezionato ID: `{cliente_id_sel}`")
+            
+            # Test rapido: conta quanti record ci sono in fatturati per questo ID senza filtri di anno
+            test_res = conn.table("fatturati").select("count", count="exact").eq("IdAnagrafica", cliente_id_sel).execute()
+            st.sidebar.write(f"📊 Record totali in fatturati: {test_res.count}")
         c1, c2 = st.columns(2)
         with c1:
             anni_scelti = st.multiselect("📅 Confronta Anni", anni_disp, default=[anni_disp[0]] if anni_disp else [])
@@ -130,6 +136,42 @@ def show_clienti():
         st.warning("Nessun dato di fatturato trovato.")
 
     st.divider()
+
+    # --- ANALISI CIAMBELLA CATEGORIE PER IL CLIENTE (VERSIONE CLEAN) ---
+        
+    st.subheader(f"🎯 Mix Merceologico Cliente")
+
+    # Raggruppamento dati per il grafico a torta
+    res_focus_client = df.groupby("Merceologica")["ImportoNettoRiga"].sum().reset_index()
+    totale_periodo_cliente = res_focus_client["ImportoNettoRiga"].sum()
+
+    # Metrica del totale per il periodo selezionato
+    st.metric(label="Fatturato Totale nel Periodo", value=f"€ {totale_periodo_cliente:,.2f}")
+
+    # Creazione del grafico a ciambella
+    fig_pie_client = px.pie(
+        res_focus_client, 
+        values='ImportoNettoRiga', 
+        names='Merceologica',
+        hole=0.5,
+        template="plotly_white",
+        color_discrete_sequence=px.colors.qualitative.Safe
+    )
+        
+    # Pulizia etichette (solo hover) per coerenza con la dashboard
+    fig_pie_client.update_traces(
+        textinfo='none', 
+        hovertemplate="<b>%{label}</b><br>Fatturato: € %{value:,.2f}<br>Incidenza: %{percent}"
+    )
+        
+    fig_pie_client.update_layout(
+        height=500,
+        showlegend=True,
+        legend=dict(orientation="v", y=0.5, x=1, title="Categorie"),
+        margin=dict(t=20, b=20, l=20, r=20)
+    )
+
+    st.plotly_chart(fig_pie_client, use_container_width=True)
 
     # --- 7. DIARIO VISITE (DEMO IN FONDO) ---
     with st.container(border=True):

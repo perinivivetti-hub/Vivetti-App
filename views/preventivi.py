@@ -76,17 +76,37 @@ def salva_preventivo_db(info_testata, righe):
     try:
         res_t = supabase.table("preventivi_testata").insert(info_testata).execute()
         id_prev = res_t.data[0]['id']
-        righe_db = [{
-            "id_preventivo": id_prev, 
-            "codice_articolo": r.get('CODICE', 'NOTA'), 
-            "descrizione": r['DESCRIZIONE'],
-            "quantita": r.get('QTA', 0), 
-            "prezzo_lordo_unitario": r.get('PREZZO_LORDO', 0),
-            "sconto_1": r.get('S1', 0), "sconto_2": r.get('S2', 0), "sconto_3": r.get('S3', 0),
-            "is_sconto_merce": r.get('SCONTO_MERCE', False), 
-            "prezzo_netto_unitario": r.get('PREZZO_NETTO', 0), 
-            "nota_riga": r.get('tipo', '') 
-        } for r in righe]
+        
+        righe_db = []
+        for r in righe:
+            if r.get('tipo') == 'NOTA_TESTO':
+                # --- RIGA NOTA GENERALE (FORMATO ORIGINALE PULITO) ---
+                righe_db.append({
+                    "id_preventivo": id_prev, 
+                    "codice_articolo": "NOTA", 
+                    "descrizione": r['DESCRIZIONE'],
+                    "quantita": 0,          # Proviamo a rimettere 0 ma...
+                    "prezzo_lordo_unitario": 0,
+                    "sconto_1": 0, "sconto_2": 0, "sconto_3": 0,
+                    "prezzo_netto_unitario": 0,
+                    "nota_riga": "NOTA_TESTO" # Usiamo questo come flag se serve al PDF
+                })
+            else:
+                # --- RIGA ARTICOLO ---
+                righe_db.append({
+                    "id_preventivo": id_prev, 
+                    "codice_articolo": r.get('CODICE'), 
+                    "descrizione": r['DESCRIZIONE'],
+                    "quantita": r.get('QTA', 1), 
+                    "prezzo_lordo_unitario": r.get('PREZZO_LORDO', 0),
+                    "sconto_1": r.get('S1', 0), 
+                    "sconto_2": r.get('S2', 0), 
+                    "sconto_3": r.get('S3', 0),
+                    "is_sconto_merce": r.get('SCONTO_MERCE', False), 
+                    "prezzo_netto_unitario": r.get('PREZZO_NETTO', 0), 
+                    "nota_riga": r.get('NOTA', '') 
+                })
+        
         supabase.table("preventivi_righe").insert(righe_db).execute()
         return True, id_prev
     except Exception as e: 
@@ -143,6 +163,8 @@ def show_preventivi():
                     val_r = 0 if riga['SCONTO_MERCE'] else (riga['PREZZO_NETTO'] * riga['QTA'])
                     tot_n += val_r
                     ci.markdown(f"**{riga['CODICE']}** - {riga['DESCRIZIONE']}")
+                    if riga.get('NOTA'):
+                        ci.caption(f"Note articolo: {riga['NOTA']}")
                     ci.caption(f"Qta: {riga['QTA']} | Sconti: {format_sconti_string(riga['S1'], riga['S2'], riga['S3'])}")
                     cv.markdown(f"**€ {val_r:,.2f}**")
                     b1, b2 = c_btns.columns(2)

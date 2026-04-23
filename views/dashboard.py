@@ -229,6 +229,46 @@ def show_dashboard():
         )
         st.plotly_chart(fig_merce, use_container_width=True)
 
+        # --- ANALISI DETTAGLIATA SINGOLO MARCHIO (VERSIONE CLEAN) ---
+        st.divider()
+        st.subheader("🔍 Focus Dettagliato sul Marchio")
+
+        # 1. Selettore marchio
+        marchi_disp = sorted(df_final["Famiglia"].unique().tolist())
+        marchio_focus = st.selectbox("Seleziona un Marchio per l'analisi merceologica", marchi_disp)
+
+        # 2. Filtraggio dati
+        df_focus = df_final[df_final["Famiglia"] == marchio_focus]
+        res_focus = df_focus.groupby("Merceologica")["ImportoNettoRiga"].sum().reset_index()
+        totale_marchio = res_focus["ImportoNettoRiga"].sum()
+
+        # 3. Layout: Totale in alto e Grafico sotto
+        st.metric(label=f"Fatturato Totale {marchio_focus}", value=f"€ {totale_marchio:,.2f}")
+
+        fig_pie = px.pie(
+            res_focus, 
+            values='ImportoNettoRiga', 
+            names='Merceologica',
+            hole=0.5, # Effetto ciambella leggermente più pronunciato
+            template="plotly_white",
+            color_discrete_sequence=px.colors.qualitative.Safe
+        )
+        
+        # Rimuoviamo le etichette interne (textinfo='none')
+        fig_pie.update_traces(
+            textinfo='none', 
+            hovertemplate="<b>%{label}</b><br>Fatturato: € %{value:,.2f}<br>Incidenza: %{percent}"
+        )
+        
+        fig_pie.update_layout(
+            height=500,
+            showlegend=True,
+            legend=dict(orientation="v", y=0.5, x=1, title="Categorie"),
+            margin=dict(t=20, b=20, l=20, r=20)
+        )
+
+        st.plotly_chart(fig_pie, use_container_width=True)
+
         # GRAFICO 5: TOP 30 CLIENTI - ORDINATO CON IL PIÙ GRANDE IN ALTO
         st.divider()
         st.subheader("🏙️ Top 30 Clienti per Fatturato")
