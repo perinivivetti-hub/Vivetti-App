@@ -156,7 +156,10 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
         return temp.replace('?', ' ')
 
     pdf = FPDF(orientation='P', unit='mm', format='A4')
+    # Disabilitiamo l'auto_page_break standard per gestirlo al millimetro dentro la tabella
+    pdf.set_auto_page_break(auto=False)
     pdf.add_page()
+    
     logo_path = 'LogoVivetti.png'
     if os.path.exists(logo_path): pdf.image(logo_path, x=10, y=8, w=45) 
     
@@ -182,47 +185,95 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(100, 6, pulisci_testo(f"CONSEGNA PREVISTA: {consegna_str}"), ln=True)
     
-    pdf.ln(8); pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
+    pdf.ln(8)
+    
+    # Definizione colonne standard
     cols = [("CODICE", 35), ("DESCRIZIONE", 55), ("Q.TA", 10), ("PREZZO U.", 20), ("SCONTI", 20), ("NETTO U.", 20), ("TOTALE", 20)]
-    for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', True)
-    pdf.ln(); pdf.set_font("Arial", '', 8)
+    
+    def stampa_intestazione_tabella():
+        pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
+        for txt, w in cols: 
+            pdf.cell(w, 8, txt, 1, 0, 'C', True)
+        pdf.ln()
+        pdf.set_font("Arial", '', 8)
+
+    stampa_intestazione_tabella()
 
     for r in righe:
-        if pdf.get_y() > 250:
-            pdf.add_page()
-            pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
-            for txt, w in cols: pdf.cell(w, 8, txt, 1, 0, 'C', True)
-            pdf.ln(); pdf.set_font("Arial", '', 8)
-
         if r.get('tipo') == 'NOTA_TESTO':
-            pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(245, 245, 245)
             testo_nota = pulisci_testo(r['DESCRIZIONE']).upper()
-            pdf.multi_cell(180, 8, testo_nota, border=1, align='L', fill=True)
+            # Calcoliamo quante righe occuperà la nota (larghezza totale tabella = 180mm)
+            # FPDF2 multi_cell in modalità simulata per calcolare l'altezza preventiva
+            line_count = len(pdf.multi_cell(180, 6, testo_nota, split_only=True))
+            h_nota = max(line_count * 6, 8)
+            
+            # Controllo salto pagina per la nota
+            if pdf.get_y() + h_nota > 270:
+                pdf.add_page()
+                stampa_intestazione_tabella()
+                
+            pdf.set_font("Arial", 'B', 9); pdf.set_fill_color(245, 245, 245)
+            pdf.multi_cell(180, 6, testo_nota, border=1, align='L', fill=True)
             pdf.set_font("Arial", '', 8)
+            
         else:
             p_l, p_u = float(r['PREZZO_LORDO']), (0.0 if r['SCONTO_MERCE'] else float(r['PREZZO_NETTO']))
             s_str = "OMAGGIO" if r['SCONTO_MERCE'] else format_sconti_string(r['S1'], r['S2'], r['S3'])
             
             desc_testo = pulisci_testo(r['DESCRIZIONE'])
-            if len(desc_testo) > 250: desc_testo = desc_testo[:247] + "..."
             if r.get('NOTA'): desc_testo += pulisci_testo(f"\nNote: {r['NOTA']}")
             
-            y_before = pdf.get_y()
-            pdf.set_xy(45, y_before)
-            pdf.multi_cell(55, 5, desc_testo, border=0, align='L')
-            h = max(pdf.get_y() - y_before, 8)
+            # Calcoliamo l'altezza esatta della descrizione PRIMA di stamparla (colonna da 55mm)
+            line_count = len(pdf.multi_cell(55, 4.5, desc_testo, split_only=True))
+            h_riga = max(line_count * 4.5 + 2, 8) # Aggiungiamo un piccolo padding di 2mm
             
-            pdf.set_xy(10, y_before)
-            pdf.cell(35, h, pulisci_testo(r['CODICE']), border=1, align='C')
-            pdf.set_xy(45, y_before)
-            pdf.multi_cell(55, 5, desc_testo, border=1, align='L')
-            pdf.set_xy(100, y_before)
-            pdf.cell(10, h, str(r['QTA']), border=1, align='C')
-            pdf.cell(20, h, f"{p_l:,.2f}", border=1, align='R')
-            pdf.cell(20, h, pulisci_testo(s_str), border=1, align='C')
-            pdf.cell(20, h, f"{p_u:,.2f}", border=1, align='R')
-            pdf.cell(20, h, f"{(p_u * r['QTA']):,.2f}", border=1, ln=1, align='R')
+            # Controllo di sicurezza: se la riga sfora il margine inferiore (270mm), si passa alla pagina successiva
+            if pdf.get_y() + h_riga > 270:
+                pdf.add_page()
+                stampa_intestazione_tabella()
             
+            # Memorizziamo la coordinata Y di partenza della riga corrente
+            y_start = pdf.get_y()
+            x_start = 10 # Margine sinistro standard di FPDF
+            
+            # 1. Colonna CODICE
+            pdf.set_xy(x_start, y_start)
+            pdf.cell(35, h_riga, pulisci_testo(r['CODICE']), border=1, align='C')
+            
+            # 2. Colonna DESCRIZIONE (Usiamo multi_cell per andare a capo dentro la stessa altezza di riga)
+            pdf.set_xy(x_start + 35, y_start)
+            # Per fare in modo che il bordo della multi_cell si allunghi per l'intera altezza h_riga,
+            # stampiamo prima il rettangolo di bordo e poi il testo dentro
+            pdf.rect(x_start + 35, y_start, 55, h_riga)
+            pdf.multi_cell(55, 4.5, desc_testo, border=0, align='L')
+            
+            # 3. Colonna QTA
+            pdf.set_xy(x_start + 35 + 55, y_start)
+            pdf.cell(10, h_riga, str(r['QTA']), border=1, align='C')
+            
+            # 4. Colonna PREZZO LORDO
+            pdf.set_xy(x_start + 35 + 55 + 10, y_start)
+            pdf.cell(20, h_riga, f"{p_l:,.2f}", border=1, align='R')
+            
+            # 5. Colonna SCONTI
+            pdf.set_xy(x_start + 35 + 55 + 10 + 20, y_start)
+            pdf.cell(20, h_riga, pulisci_testo(s_str), border=1, align='C')
+            
+            # 6. Colonna NETTO UNITARIO
+            pdf.set_xy(x_start + 35 + 55 + 10 + 20 + 20, y_start)
+            pdf.cell(20, h_riga, f"{p_u:,.2f}", border=1, align='R')
+            
+            # 7. Colonna TOTALE RIGA
+            pdf.set_xy(x_start + 35 + 55 + 10 + 20 + 20 + 20, y_start)
+            pdf.cell(20, h_riga, f"{(p_u * r['QTA']):,.2f}", border=1, align='R')
+            
+            # Spostiamo definitivamente il cursore in basso per la riga successiva
+            pdf.set_y(y_start + h_riga)
+            
+    # Controllo finale prima di stampare il totale complessivo
+    if pdf.get_y() + 15 > 270:
+        pdf.add_page()
+        
     pdf.ln(5); pdf.set_font("Arial", 'B', 12)
     pdf.cell(160, 10, "TOTALE NETTO (IVA ESCLUSA)", 0, 0, 'R')
     pdf.cell(30, 10, f"EUR {testata['totale_netto']:,.2f}", 0, 1, 'R')
