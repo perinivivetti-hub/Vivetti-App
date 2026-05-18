@@ -134,7 +134,12 @@ elif scelta == "📦 Magazzino":
     st.info("La pagina **Magazzino** è attualmente in fase di sviluppo (WIP).")
 
 elif scelta == "🗓️ Eventi Aziendali":
-    st.info("La pagina **Eventi Aziendali** è attualmente in fase di sviluppo (WIP).")
+    try:
+        from views.eventi import show_eventi
+        show_eventi()
+    except Exception as e:
+        st.info("La pagina 'Eventi' è in fase di sviluppo o il file non è presente.")
+        st.error(f"Errore reale: {e}")
 
 elif scelta == "📈 Nota Spese":
     st.info("La pagina **Nota Spese** è attualmente in fase di sviluppo (WIP).")
