@@ -50,8 +50,9 @@ def search_clients(search_term: str):
 def search_articles(search_term: str):
     if not search_term or len(search_term) < 3:
         return []
+    # MODIFICATO: Aggiunto PREZZOLISTINO nella select
     res = supabase.table("listino_import")\
-        .select("CODICE, DESCRIZIONE, PREZZO, SCONTO1, SCONTO2, SCONTO3")\
+        .select("CODICE, DESCRIZIONE, PREZZO, SCONTO1, SCONTO2, SCONTO3, PREZZOLISTINO")\
         .or_(f"CODICE.ilike.%{search_term}%,DESCRIZIONE.ilike.%{search_term}%")\
         .limit(20)\
         .execute()
@@ -80,16 +81,15 @@ def salva_preventivo_db(info_testata, righe):
         righe_db = []
         for r in righe:
             if r.get('tipo') == 'NOTA_TESTO':
-                # --- RIGA NOTA GENERALE (FORMATO ORIGINALE PULITO) ---
                 righe_db.append({
                     "id_preventivo": id_prev, 
                     "codice_articolo": "NOTA", 
                     "descrizione": r['DESCRIZIONE'],
-                    "quantita": 0,          # Proviamo a rimettere 0 ma...
+                    "quantita": 0,          
                     "prezzo_lordo_unitario": 0,
                     "sconto_1": 0, "sconto_2": 0, "sconto_3": 0,
                     "prezzo_netto_unitario": 0,
-                    "nota_riga": "NOTA_TESTO" # Usiamo questo come flag se serve al PDF
+                    "nota_riga": "NOTA_TESTO" 
                 })
             else:
                 # --- RIGA ARTICOLO ---
@@ -104,7 +104,8 @@ def salva_preventivo_db(info_testata, righe):
                     "sconto_3": r.get('S3', 0),
                     "is_sconto_merce": r.get('SCONTO_MERCE', False), 
                     "prezzo_netto_unitario": r.get('PREZZO_NETTO', 0), 
-                    "nota_riga": r.get('NOTA', '') 
+                    "nota_riga": r.get('NOTA', ''),
+                    "PREZZOLISTINO": r.get('PREZZOLISTINO', 0.0) # MODIFICATO: Salvataggio su DB del campo in maiuscolo
                 })
         
         supabase.table("preventivi_righe").insert(righe_db).execute()
@@ -181,7 +182,7 @@ def show_preventivi():
         selected_article = st_searchbox(search_articles, placeholder="Cerca codice o descrizione...", key=f"search_art_{st.session_state.search_key}", clear_on_submit=True)
     with col_m:
         if st.button("➕ Manuale", use_container_width=True):
-            st.session_state.temp_item = {"CODICE": "EXTRA", "DESCRIZIONE": "", "PREZZO": 0.0, "is_manual": True}
+            st.session_state.temp_item = {"CODICE": "EXTRA", "DESCRIZIONE": "", "PREZZO": 0.0, "PREZZOLISTINO": 0.0, "is_manual": True}
             st.rerun()
     with col_n:
         if st.button("🗒️ Nota", use_container_width=True):
@@ -205,7 +206,7 @@ def show_preventivi():
                     st.session_state.temp_item = None; st.session_state.search_key += 1; st.rerun()
                 if c2.button("Annulla", use_container_width=True): st.session_state.temp_item = None; st.rerun()
             else:
-                st.markdown(f"#### ⚙️ Configura Articolo")
+                st.markdown("#### ⚙️ Configura Articolo")
                 is_manual = item.get("is_manual", False)
                 if is_manual:
                     c_m1, c_m2 = st.columns([1, 2])
@@ -214,7 +215,12 @@ def show_preventivi():
                 else: 
                     st.write(f"**Codice:** `{item['CODICE']}` | **Descrizione:** {item['DESCRIZIONE']}")
                 
-                col_p1, col_p2 = st.columns(2)
+                # MODIFICATO: Estrazione sicura del PREZZOLISTINO dall'oggetto per impostare il valore iniziale
+                p_listino_init = item.get('PREZZOLISTINO')
+                if p_listino_init is None: p_listino_init = item.get('prezzolistino', 0.0)
+
+                col_pl, col_p1, col_p2 = st.columns(3) # Cambiato a 3 colonne per includere il listino
+                p_listino_originale = col_pl.number_input("Prezzo di Listino", value=float(p_listino_init), format="%.2f", disabled=True)
                 pl = col_p1.number_input("Prezzo Unitario", value=float(item.get('PREZZO', item.get('PREZZO_LORDO', 0.0))), format="%.2f")
                 qta_val = col_p2.number_input("Quantità", min_value=1, value=int(item.get('QTA', 1)))
                 
@@ -239,7 +245,8 @@ def show_preventivi():
                     st.session_state.righe_preventivo.append({
                         "CODICE": item["CODICE"], "DESCRIZIONE": item["DESCRIZIONE"], 
                         "PREZZO_LORDO": pl, "PREZZO_NETTO": pn, "QTA": qta_val, 
-                        "SCONTO_MERCE": omaggio, "S1": s1, "S2": s2, "S3": s3, "NOTA": nota_r
+                        "SCONTO_MERCE": omaggio, "S1": s1, "S2": s2, "S3": s3, "NOTA": nota_r,
+                        "PREZZOLISTINO": p_listino_originale # MODIFICATO: Aggiunto all'oggetto salvato nello stato
                     })
                     st.session_state.temp_item = None; st.session_state.search_key += 1; st.rerun()
                 if cann.button("Annulla", use_container_width=True): st.session_state.temp_item = None; st.rerun()
