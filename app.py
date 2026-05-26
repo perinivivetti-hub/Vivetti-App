@@ -142,7 +142,12 @@ elif scelta == "🗓️ Eventi Aziendali":
         st.error(f"Errore reale: {e}")
 
 elif scelta == "📈 Nota Spese":
-    st.info("La pagina **Nota Spese** è attualmente in fase di sviluppo (WIP).")
+    try:
+        from views.note_spese import show_note_spese
+        show_note_spese()
+    except Exception as e:
+        st.info("La pagina 'Nota Spese' è in fase di sviluppo o il file non è presente.")
+        st.error(f"Errore reale: {e}")
 
 elif scelta == "🗺️ Mappa":
     try:
