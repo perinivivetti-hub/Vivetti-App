@@ -115,7 +115,7 @@ def show_dashboard():
         
         with f2:
             mesi_disp = sorted(df_base["MeseRif"].unique().tolist())
-            mesi_default = [m for m in ['01', '02', '03', '04'] if m in mesi_disp]
+            mesi_default = [m for m in ['01', '02', '03', '04', '05'] if m in mesi_disp]
             mesi_sel = st.multiselect("📅 Mesi da includere", options=mesi_disp, default=mesi_default if mesi_default else mesi_disp)
         
         agente_nome_sel = "Tutti"
