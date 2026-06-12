@@ -7,7 +7,6 @@ from streamlit_cookies_manager import EncryptedCookieManager
 st.set_page_config(page_title="Vivetti App", page_icon="LogoVivetti.png", layout="wide")
 
 # 2. INIZIALIZZAZIONE GESTORE COOKIE
-# Nota: La password serve a criptare il contenuto del cookie sul browser dell'utente
 cookies = EncryptedCookieManager(
     prefix="vivetti_app_",
     password=st.secrets.get("cookie_password", "chiave_segreta_obbligatoria_32_caratteri_min") 
@@ -18,11 +17,9 @@ if not cookies.ready():
 
 # 3. GESTIONE LOGICA DI AUTENTICAZIONE (Cookie + Session State)
 if 'autenticato' not in st.session_state:
-    # Controlliamo se esiste il cookie salvato nel browser
     cookie_user = cookies.get("auth_user")
     
     if cookie_user and "passwords" in st.secrets and cookie_user in st.secrets["passwords"]:
-        # AUTO-LOGIN: Se il cookie esiste e l'utente è valido, logghiamo automaticamente
         st.session_state['autenticato'] = True
         st.session_state['user_info'] = {
             "username": cookie_user,
@@ -30,7 +27,6 @@ if 'autenticato' not in st.session_state:
             "ruolo": st.secrets["ruoli"][cookie_user]
         }
     else:
-        # Nessun cookie valido trovato
         st.session_state['autenticato'] = False
         st.session_state['user_info'] = None
 
@@ -48,11 +44,9 @@ if not st.session_state['autenticato']:
                 
                 if st.form_submit_button("Accedi", use_container_width=True):
                     if user in st.secrets["passwords"] and st.secrets["passwords"][user] == password:
-                        # 1. Salviamo nel Cookie per il futuro
                         cookies["auth_user"] = user
                         cookies.save() 
                         
-                        # 2. Aggiorniamo la Sessione attuale
                         st.session_state['autenticato'] = True
                         st.session_state['user_info'] = {
                             "username": user,
@@ -62,20 +56,32 @@ if not st.session_state['autenticato']:
                         st.rerun()
                     else:
                         st.error("Credenziali errate")
-        st.stop() # Blocca l'app finché il login non ha successo
+        st.stop()
 
-# --- SE SIAMO QUI, L'UTENTE È LOGGATO (O TRAMITE FORM O TRAMITE COOKIE) ---
+# --- SE SIAMO QUI, L'UTENTE È LOGGATO ---
 user_data = st.session_state['user_info']
+ruolo = str(user_data.get("ruolo", "")).lower().strip()
 
-# 4. SIDEBAR E NAVIGAZIONE
+# 4. DEFINIZIONE DINAMICA DEL MENU IN BASE AL RUOLO
+# Lista standard completa per agenti e admin
+pagine_disponibili = ["📊 Nuovo Preventivo", "📊 Archivio Preventivi", "📦 Archivio Ordini", "📊 Performance", "🏬 Clienti", "📦 Magazzino", "🗓️ Eventi Aziendali", "📈 Nota Spese", "🗺️ Mappa"]
+
+if ruolo == "autista":
+    # L'autista vede SOLO ed esclusivamente la nota spese
+    pagine_disponibili = ["📈 Nota Spese"]
+elif ruolo == "amministrazione":
+    # L'amministrazione vede tutto tranne la creazione di nuovi preventivi
+    pagine_disponibili = [p for p in pagine_disponibili if p != "📊 Nuovo Preventivo"]
+
+# 5. SIDEBAR E NAVIGAZIONE
 with st.sidebar:
     st.image("LogoVivetti.png", use_container_width=True)
     st.divider()
 
     st.markdown(f"### 👤 {user_data['username']}")
-    st.caption(f"Ruolo: {user_data['ruolo'].capitalize()}")
+    st.caption(f"Ruolo: {user_data['ruolo'].upper()}")
     
-    # PULSANTE LOGOUT: Cancella cookie e sessione
+    # PULSANTE LOGOUT
     if st.button("Logout", use_container_width=True):
         del cookies["auth_user"]
         cookies.save()
@@ -85,14 +91,15 @@ with st.sidebar:
     
     st.divider()
     
+    # Mostra la lista filtrata dinamicamente
     scelta = st.radio(
         "NAVIGAZIONE",
-        ["📊 Nuovo Preventivo", "📊 Archivio Preventivi", "📦 Archivio Ordini", "📊 Performance", "🏬 Clienti", "📦 Magazzino", "🗓️ Eventi Aziendali", "📈 Nota Spese", "🗺️ Mappa"],
+        options=pagine_disponibili,
         index=0,
         key="menu_nav"
     )
 
-# 5. CARICAMENTO DELLE PAGINE (VIEWS)
+# 6. CARICAMENTO DELLE PAGINE (VIEWS)
 if scelta == "📊 Nuovo Preventivo":
     try:
         from views.preventivi import show_preventivi
@@ -119,7 +126,6 @@ elif scelta == "📊 Performance":
         from views.dashboard import show_dashboard
         show_dashboard()
     except Exception as e:
-        # Questo ti mostrerà l'errore REALE sotto il messaggio blu
         st.info("La pagina 'Performance' è in fase di sviluppo o il file non è presente.")
         st.error(f"Errore tecnico: {e}")
     
