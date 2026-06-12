@@ -13,7 +13,6 @@ def get_supabase_client():
 try:
     supabase = get_supabase_client()
 except Exception:
-    # Gestione nel caso in cui il client sia già istanziato globalmente
     pass
 
 # --- FUNZIONI CARICAMENTO DATI & STORAGE (SUPABASE) ---
@@ -44,19 +43,15 @@ def get_note_spese(mese, anno, id_agente=None):
 def upload_scontrino(file, id_agente):
     """Carica la foto dello scontrino nello storage di Supabase e restituisce l'URL pubblico"""
     try:
-        # Pulizia nome file per evitare problemi con caratteri speciali o spazi
         clean_name = file.name.replace(' ', '_').replace('(', '').replace(')', '')
-        # Generazione nome unico con timestamp
         file_name = f"spesa_{id_agente}_{int(time.time())}_{clean_name}"
         
-        # Caricamento nel bucket delle ricevute
         supabase.storage.from_("ricevute_spese").upload(
             path=file_name,
             file=file.getvalue(),
             file_options={"content-type": file.type}
         )
         
-        # Recupero dell'URL pubblico del file caricato
         url_data = supabase.storage.from_("ricevute_spese").get_public_url(file_name)
         
         if isinstance(url_data, str): return url_data
@@ -90,11 +85,11 @@ def elimina_nota_spesa(id_nota):
 # --- INTERFACCIA UTENTE PRINCIPALE ---
 
 def show_note_spese():
-    st.subheader("💰 Gestione Note Spese Agenti")
+    st.subheader("💰 Gestione Note Spese ")
     
     # Recupero dati utente e ruoli
     user_data = st.session_state.get('user_info', {})
-    ruolo = str(user_data.get("ruolo", "")).lower()
+    ruolo = str(user_data.get("ruolo", "")).lower().strip()
     agente_id_loggato = str(user_data.get("agente_corrispondente", "")).strip()
     
     # Costanti temporali per i filtri
@@ -112,42 +107,56 @@ def show_note_spese():
             mese_sel_num = mesi_nomi.index(mese_sel_nome) + 1
             
         with col_a:
+            # Corretto l'errore sul calcolo dinamico degli anni
             anni_disponibili = list(range(oggi.year - 2, oggi.year + 3))
             anno_sel = st.selectbox("Anno di riferimento", options=anni_disponibili, index=anni_disponibili.index(oggi.year))
             
-        # Mappatura e gestione permessi agente/admin
         mappa_agenti = get_mappa_agenti()
         agente_filtro_id = None
         
         with col_ag:
-            if ruolo == "admin":
-                opzioni_agenti = {"TUTTI GLI AGENTI": None}
+            # Gestione Viste: L'amministrazione monitora tutti. Gli altri vedono solo se stessi.
+            if ruolo == "amministrazione":
+                opzioni_agenti = {"TUTTI GLI UTENTI / AGENTI": None}
                 for id_ag, nome_ag in mappa_agenti.items():
                     opzioni_agenti[f"{nome_ag} ({id_ag})"] = id_ag
-                    
-                agente_scelto_testo = st.selectbox("Seleziona Agente", options=list(opzioni_agenti.keys()))
+                
+                # Aggiungiamo a runtime nel filtro anche gli ID del secrets se non sono ancora mappati sul DB
+                for user_secret, id_secret in st.secrets.get("agenti", {}).items():
+                    if id_secret not in opzioni_agenti.values():
+                        opzioni_agenti[f"{user_secret.upper()} ({id_secret})"] = str(id_secret).strip()
+                
+                agente_scelto_testo = st.selectbox("Seleziona Utente/Agente", options=list(opzioni_agenti.keys()))
                 agente_filtro_id = opzioni_agenti[agente_scelto_testo]
             else:
-                nome_agente_loggato = mappa_agenti.get(agente_id_loggato, f"AGENTE ({agente_id_loggato})")
-                st.text_input("Agente Corrente", value=nome_agente_loggato, disabled=True)
+                # Se l'utente non è nel DB, recuperiamo il nome testuale direttamente dal secrets.toml
+                nome_loggato_visibile = mappa_agenti.get(agente_id_loggato, None)
+                if not nome_loggato_visibile:
+                    for u_sec, id_sec in st.secrets.get("agenti", {}).items():
+                        if str(id_sec).strip() == agente_id_loggato:
+                            nome_loggato_visibile = u_sec.upper()
+                            break
+                if not nome_loggato_visibile:
+                    nome_loggato_visibile = agente_id_loggato
+                    
+                st.text_input("Utente Connesso", value=str(nome_loggato_visibile).upper(), disabled=True)
                 agente_filtro_id = agente_id_loggato
 
     st.divider()
 
-    # --- SEZIONE 1: FORM DI INSERIMENTO (SOLO AGENTI) ---
-    if ruolo == "agente":
+    # --- SEZIONE 1: FORM DI INSERIMENTO (ACCESSIBILE A TUTTI TRANNE AMMINISTRAZIONE) ---
+    if ruolo in ["agente", "admin", "autista"]:
         with st.expander("➕ Inserisci Nuova Riga Nota Spese", expanded=False):
             with st.form("form_nuova_spesa", clear_on_submit=True):
                 c1, c2, c3 = st.columns([1, 1, 1])
                 
                 data_scon = c1.date_input("Data Scontrino/Ricevuta", max_value=oggi)
-                causali_predefinite = ["Pranzo/Cena con cliente", "Carburante", "Pedaggio / Parcheggio", "Hotel / Alloggio", "Altro"]
+                causali_predefinite = ["Pranzo/Cena con cliente", "Carburante", "Pedaggio / Parcheggio", "Hotel / Alloggio", "Trasferta / Consegna", "Altro"]
                 causale_sel = c2.selectbox("Causale Spesa", options=causali_predefinite)
                 importo_val = c3.number_input("Prezzo Pagato (€)", min_value=0.00, value=0.00, format="%.2f")
                 
-                note_spesa = st.text_input("Note / Dettagli aggiuntivi (Es. Nome cliente o destinazione)")
+                note_spesa = st.text_input("Note / Dettagli aggiuntivi (Es. Destinazione o note viaggio)")
                 
-                # Widget Upload Immagine / Scatto foto da Mobile
                 foto_file = st.file_uploader("📸 Carica o Scatta Foto dello Scontrino", type=["jpg", "jpeg", "png", "pdf"])
                 
                 submit_spesa = st.form_submit_button("💾 SALVA RIGA", use_container_width=True)
@@ -161,7 +170,6 @@ def show_note_spese():
                         url_foto_salvata = None
                         upload_valido = True
                         
-                        # Processo di Upload file se presente
                         if foto_file:
                             with st.spinner("Caricamento allegato sullo storage..."):
                                 url_foto_salvata = upload_scontrino(foto_file, agente_id_loggato)
@@ -194,10 +202,20 @@ def show_note_spese():
     if record_spese:
         df_spese = pd.DataFrame(record_spese)
         
-        # Sincronizzazione colonne ed etichette visive
         df_spese["id_sicuro"] = df_spese["id"]
         df_spese["id_agente_raw"] = df_spese["id_agente"].astype(str).str.strip()
-        df_spese["Agente"] = df_spese["id_agente_raw"].apply(lambda x: mappa_agenti.get(x, f"Agente ({x})"))
+        
+        # Mappatura del nome utente per la visualizzazione tabellare dell'amministrazione
+        def mappa_nome_tabella(x):
+            nome = mappa_agenti.get(x, None)
+            if not nome:
+                for u_sec, id_sec in st.secrets.get("agenti", {}).items():
+                    if str(id_sec).strip() == x:
+                        return u_sec.upper()
+                return f"ID: {x}"
+            return nome
+
+        df_spese["Utente/Agente"] = df_spese["id_agente_raw"].apply(mappa_nome_tabella)
         df_spese["Data"] = pd.to_datetime(df_spese["data_scontrino"]).dt.strftime('%d/%m/%Y')
         df_spese["Allegato"] = df_spese["url_scontrino"]
         
@@ -207,27 +225,26 @@ def show_note_spese():
             "note": "Note"
         })
         
-        # Logica di autorizzazione cancellazione (Agente sulle sue, Admin su tutte)
-        if ruolo == "agente":
-            righe_eliminabili = [row["id_agente_raw"] == agente_id_loggato for _, row in df_spese.iterrows()]
-        elif ruolo == "admin":
+        # Gestione cancellazioni
+        if ruolo == "amministrazione":
             righe_eliminabili = [True] * len(df_spese)
+        elif ruolo in ["agente", "admin", "autista"]:
+            righe_eliminabili = [row["id_agente_raw"] == agente_id_loggato for _, row in df_spese.iterrows()]
         else:
             righe_eliminabili = [False] * len(df_spese)
             
         df_spese["_is_editable"] = righe_eliminabili
         df_spese.insert(0, "Elimina", [False if ok else None for ok in righe_eliminabili])
         
-        # Ordine colonne basato sul ruolo utente
+        # Organizzazione colonne basata sul ruolo
         colonne_vista = ["Elimina", "Data", "Causale", "Importo (€)", "Note", "Allegato"]
-        if ruolo == "admin":
-            colonne_vista.insert(1, "Agente")
+        if ruolo == "amministrazione":
+            colonne_vista.insert(1, "Utente/Agente")
             
-        # Configurazione visiva colonne del data_editor
         col_config = {
-            "Elimina": st.column_config.CheckboxColumn("🗑️", help="Spunta e clicca fuori per eliminare la voce", default=False),
+            "Elimina": st.column_config.CheckboxColumn("🗑️", help="Spunta e clicca fuori dalla tabella per eliminare", default=False),
             "Data": st.column_config.TextColumn("Data Scontrino", disabled=True),
-            "Agente": st.column_config.TextColumn("Agente", disabled=True),
+            "Utente/Agente": st.column_config.TextColumn("Inserito Da", disabled=True),
             "Causale": st.column_config.TextColumn("Causale Spesa", disabled=True),
             "Importo (€)": st.column_config.NumberColumn("Importo", format="€ %.2f", disabled=True),
             "Note": st.column_config.TextColumn("Note / Dettagli", disabled=True),
@@ -245,11 +262,10 @@ def show_note_spese():
             key=editor_key
         )
         
-        # Calcolo e stampa del totale monetario mensile
         totale_mese = df_spese["Importo (€)"].astype(float).sum()
-        st.markdown(f"<h5 style='text-align: right; color: #ff4b4b;'>Totale Spese del Mese: € {totale_mese:,.2f}</h5>", unsafe_allow_html=True)
+        st.markdown(f"<h5 style='text-align: right; color: #ff4b4b;'>Totale Spese Visionate: € {totale_mese:,.2f}</h5>", unsafe_allow_html=True)
         
-        # Intercettazione eliminazione riga rinfrescando lo stato
+        # Logica per intercettare l'eliminazione delle righe
         stato_modifiche = st.session_state.get(editor_key, {})
         righe_modificate = stato_modifiche.get("edited_rows", {})
         
@@ -260,18 +276,17 @@ def show_note_spese():
                 if variazioni.get("Elimina") is True and df_spese.at[index, "_is_editable"]:
                     id_da_rimuovere = df_spese.at[index, "id_sicuro"]
                     causale_p = df_spese.at[index, "Causale"]
-                    importo_p = df_spese.at[index, "Importo (€)"]
                     
                     st.session_state[editor_key]["edited_rows"] = {}
                     
                     with st.spinner("Eliminazione riga selezionata..."):
                         if elimina_nota_spesa(id_da_rimuovere):
-                            st.toast(f"❌ Spesa '{causale_p}' rimossa!", icon="🗑️")
+                            st.toast(f"❌ Record '{causale_p}' rimosso!", icon="🗑️")
                             time.sleep(0.8)
                             st.rerun()
                             
     else:
-        st.info("ℹ️ Nessuna nota spesa inserita per i filtri selezionati.")
+        st.info("ℹ️ Nessuna nota spesa presente per i filtri selezionati.")
 
 if __name__ == "__main__":
     show_note_spese()
