@@ -33,9 +33,12 @@ def search_clients(search_term: str):
         return []
     user_data = st.session_state.get('user_info', {})
     query = supabase.table("rubrica_clienti").select("*")
+    
+    # Gli agenti vedono solo i propri clienti, l'admin vede tutto
     if user_data.get("ruolo") == "agente":
         ag_id = str(user_data.get("agente_corrispondente", "")).strip()
         query = query.eq("id_agente", ag_id)
+        
     res = query.ilike("ragione_sociale", f"%{search_term}%").limit(15).execute()
     if not res.data: return []
     return [(f"{row['ragione_sociale']} ({row.get('citta', '')})", row) for row in res.data]
@@ -121,6 +124,9 @@ def show_eventi():
     # Inizializziamo lo stato per ricordare l'evento selezionato al rerun
     if "id_evento_corrente" not in st.session_state:
         st.session_state.id_evento_corrente = None
+
+    # Reciperiamo la mappa agenti utile in più punti della pagina
+    mappa_agenti = get_mappa_agenti()
 
     # ==========================================
     # VISTA ADMIN: CREAZIONE NUOVO EVENTO
@@ -219,7 +225,7 @@ def show_eventi():
         else:
             st.caption("Nessuna descrizione fornita per questo evento.")
         st.markdown(f"**Posti ancora disponibili:** `{posti_rimanenti}`")
-        
+    
     with c_img:
         url_file = evento_selezionato.get('locandina_url')
         if url_file:
@@ -235,7 +241,6 @@ def show_eventi():
     
     if iscritti_totali:
         df_iscritti = pd.DataFrame(iscritti_totali)
-        mappa_agenti = get_mappa_agenti()
         
         df_iscritti["id_database_sicuro"] = df_iscritti["id"]
         df_iscritti["id_agente_raw"] = df_iscritti["id_agente"].astype(str).str.strip()
@@ -297,7 +302,6 @@ def show_eventi():
                     st.session_state[editor_key]["edited_rows"] = {}
                     
                     with st.spinner(f"Rimozione iscrizione per {nome_p}..."):
-                        # Blocchiamo l'ID dell'evento nello stato prima di rinfrescare l'app
                         st.session_state.id_evento_corrente = evento_selezionato['id']
                         
                         if elimina_iscrizione(id_da_rimuovere):
@@ -313,8 +317,8 @@ def show_eventi():
         
     st.divider()
     
-    # --- SEZIONE: FORM DI ISCRIZIONE (SOLO PER AGENTI) ---
-    if ruolo == "agente":
+    # --- SEZIONE: FORM DI ISCRIZIONE (ABILITATO PER AGENTI E ADMIN) ---
+    if ruolo in ["agente", "admin"]:
         if posti_rimanenti <= 0:
             st.error("❌ Questo evento ha raggiunto il limite massimo di partecipanti.")
         else:
@@ -327,6 +331,19 @@ def show_eventi():
                 if st.session_state.inscrizione_cliente_obj:
                     st.success(f"Cliente Selezionato: **{st.session_state.inscrizione_cliente_obj['ragione_sociale']}**")
                 
+                # Se l'utente è Admin, mostriamo la selectbox per scegliere l'agente
+                id_agente_scelto = agente_id
+                if ruolo == "admin":
+                    # Prepariamo la lista delle opzioni: prima "ADMIN", poi l'elenco ordinato degli agenti
+                    opzioni_agenti = ["ADMIN"] + sorted(list(mappa_agenti.keys()), key=lambda k: mappa_agenti[k])
+                    
+                    agente_selezionato_form = st.selectbox(
+                        "Assegna questa iscrizione a un Agente:",
+                        options=opzioni_agenti,
+                        format_func=lambda x: f"{mappa_agenti[x]} ({x})" if x != "ADMIN" else "NESSUN AGENTE (ADMIN)"
+                    )
+                    id_agente_scelto = agente_selezionato_form
+
                 c_nom, c_note = st.columns([1, 2])
                 nominativo = c_nom.text_input("Nominativo Partecipante", placeholder="Nome e Cognome della persona")
                 note_iscrizione = c_note.text_input("Note aggiuntive", placeholder="Es. richieste particolari...")
@@ -340,7 +357,7 @@ def show_eventi():
                         cli = st.session_state.inscrizione_cliente_obj
                         nuova_prenotazione = {
                             "id_evento": evento_selezionato['id'],
-                            "id_agente": agente_id,
+                            "id_agente": id_agente_scelto,
                             "ragione_sociale_cliente": cli['ragione_sociale'],
                             "nominativo_partecipante": nominativo.strip().upper(),
                             "note": note_iscrizione
@@ -350,14 +367,13 @@ def show_eventi():
                             st.success(f"🎉 Iscrizione di **{nominativo.strip().upper()}** confermata!")
                             st.session_state.inscrizione_cliente_obj = None 
                             
-                            # Memorizziamo l'evento corrente anche per i nuovi inserimenti
                             st.session_state.id_evento_corrente = evento_selezionato['id']
                             time.sleep(1.2)
                             st.rerun()
                         except Exception as e:
                             st.error(f"Errore durante l'iscrizione: {e}")
     else:
-        st.caption("ℹ️ Il modulo di inserimento partecipanti è riservato esclusivamente agli Agenti.")
+        st.caption("ℹ️ Il modulo di inserimento partecipanti è riservato esclusivamente agli Agenti e agli Amministratori.")
 
 if __name__ == "__main__":
     show_eventi()
