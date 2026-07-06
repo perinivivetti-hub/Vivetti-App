@@ -61,6 +61,7 @@ def carica_preventivo(id_preventivo):
         else:
             session_righe.append({
                 "CODICE": r['codice_articolo'], "DESCRIZIONE": r['descrizione'],
+                "PREZZO_LISTINO": float(r.get('PREZZOLISTINO') or 0), # <--- CORRETTO CORRISPONDENTE DB
                 "PREZZO_LORDO": float(r['prezzo_lordo_unitario'] or 0), 
                 "PREZZO_NETTO": float(r['prezzo_netto_unitario'] or 0),
                 "QTA": int(r['quantita'] or 1), "SCONTO_MERCE": bool(r['is_sconto_merce']),
@@ -109,6 +110,7 @@ def duplica_preventivo(id_preventivo_originale):
             "codice_articolo": r.get('CODICE', 'NOTA'), 
             "descrizione": r['DESCRIZIONE'], 
             "quantita": r.get('QTA', 0), 
+            "PREZZOLISTINO": r.get('PREZZO_LISTINO', 0), # <--- CORRETTO NOME CAMPO DB
             "prezzo_lordo_unitario": r.get('PREZZO_LORDO', 0),
             "sconto_1": r.get('S1', 0), "sconto_2": r.get('S2', 0), "sconto_3": r.get('S3', 0),
             "is_sconto_merce": r.get('SCONTO_MERCE', False), "prezzo_netto_unitario": r.get('PREZZO_NETTO', 0), 
@@ -127,6 +129,7 @@ def aggiorna_preventivo_db(id_preventivo, info_testata, righe):
         righe_db = [{
             "id_preventivo": id_preventivo, "codice_articolo": r.get('CODICE', 'NOTA'), 
             "descrizione": r['DESCRIZIONE'], "quantita": r.get('QTA', 0), 
+            "PREZZOLISTINO": r.get('PREZZO_LISTINO', 0), # <--- CORRETTO NOME CAMPO DB
             "prezzo_lordo_unitario": r.get('PREZZO_LORDO', 0),
             "sconto_1": r.get('S1', 0), "sconto_2": r.get('S2', 0), "sconto_3": r.get('S3', 0),
             "is_sconto_merce": r.get('SCONTO_MERCE', False), "prezzo_netto_unitario": r.get('PREZZO_NETTO', 0), 
@@ -156,7 +159,6 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
         return temp.replace('?', ' ')
 
     pdf = FPDF(orientation='P', unit='mm', format='A4')
-    # Disabilitiamo l'auto_page_break standard per gestirlo al millimetro dentro la tabella
     pdf.set_auto_page_break(auto=False)
     pdf.add_page()
     
@@ -187,8 +189,17 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
     
     pdf.ln(8)
     
-    # Definizione colonne standard
-    cols = [("CODICE", 35), ("DESCRIZIONE", 55), ("Q.TA", 10), ("PREZZO U.", 20), ("SCONTI", 20), ("NETTO U.", 20), ("TOTALE", 20)]
+    # Definizione colonne standard (larghezza totale 180)
+    cols = [
+        ("CODICE", 35), 
+        ("DESCRIZIONE", 45), 
+        ("Q.TA", 10), 
+        ("LISTINO", 20), 
+        ("PREZZO U.", 18), 
+        ("SCONTI", 16), 
+        ("NETTO U.", 18), 
+        ("TOTALE", 18)
+    ]
     
     def stampa_intestazione_tabella():
         pdf.set_font("Arial", 'B', 8); pdf.set_fill_color(230, 230, 230)
@@ -202,12 +213,9 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
     for r in righe:
         if r.get('tipo') == 'NOTA_TESTO':
             testo_nota = pulisci_testo(r['DESCRIZIONE']).upper()
-            # Calcoliamo quante righe occuperà la nota (larghezza totale tabella = 180mm)
-            # FPDF2 multi_cell in modalità simulata per calcolare l'altezza preventiva
             line_count = len(pdf.multi_cell(180, 6, testo_nota, split_only=True))
             h_nota = max(line_count * 6, 8)
             
-            # Controllo salto pagina per la nota
             if pdf.get_y() + h_nota > 270:
                 pdf.add_page()
                 stampa_intestazione_tabella()
@@ -217,66 +225,65 @@ def genera_pdf_ordine(cliente_ragione_sociale, testata, righe):
             pdf.set_font("Arial", '', 8)
             
         else:
+            p_listino = float(r.get('PREZZO_LISTINO') or 0)
             p_l, p_u = float(r['PREZZO_LORDO']), (0.0 if r['SCONTO_MERCE'] else float(r['PREZZO_NETTO']))
             s_str = "OMAGGIO" if r['SCONTO_MERCE'] else format_sconti_string(r['S1'], r['S2'], r['S3'])
             
             desc_testo = pulisci_testo(r['DESCRIZIONE'])
             if r.get('NOTA'): desc_testo += pulisci_testo(f"\nNote: {r['NOTA']}")
             
-            # Calcoliamo l'altezza esatta della descrizione PRIMA di stamparla (colonna da 55mm)
-            line_count = len(pdf.multi_cell(55, 4.5, desc_testo, split_only=True))
-            h_riga = max(line_count * 4.5 + 2, 8) # Aggiungiamo un piccolo padding di 2mm
+            line_count = len(pdf.multi_cell(45, 4.5, desc_testo, split_only=True))
+            h_riga = max(line_count * 4.5 + 2, 8)
             
-            # Controllo di sicurezza: se la riga sfora il margine inferiore (270mm), si passa alla pagina successiva
             if pdf.get_y() + h_riga > 270:
                 pdf.add_page()
                 stampa_intestazione_tabella()
             
-            # Memorizziamo la coordinata Y di partenza della riga corrente
             y_start = pdf.get_y()
-            x_start = 10 # Margine sinistro standard di FPDF
+            x_start = 10
             
             # 1. Colonna CODICE
             pdf.set_xy(x_start, y_start)
             pdf.cell(35, h_riga, pulisci_testo(r['CODICE']), border=1, align='C')
             
-            # 2. Colonna DESCRIZIONE (Usiamo multi_cell per andare a capo dentro la stessa altezza di riga)
+            # 2. Colonna DESCRIZIONE
             pdf.set_xy(x_start + 35, y_start)
-            # Per fare in modo che il bordo della multi_cell si allunghi per l'intera altezza h_riga,
-            # stampiamo prima il rettangolo di bordo e poi il testo dentro
-            pdf.rect(x_start + 35, y_start, 55, h_riga)
-            pdf.multi_cell(55, 4.5, desc_testo, border=0, align='L')
+            pdf.rect(x_start + 35, y_start, 45, h_riga)
+            pdf.multi_cell(45, 4.5, desc_testo, border=0, align='L')
             
             # 3. Colonna QTA
-            pdf.set_xy(x_start + 35 + 55, y_start)
+            pdf.set_xy(x_start + 35 + 45, y_start)
             pdf.cell(10, h_riga, str(r['QTA']), border=1, align='C')
             
-            # 4. Colonna PREZZO LORDO
-            pdf.set_xy(x_start + 35 + 55 + 10, y_start)
-            pdf.cell(20, h_riga, f"{p_l:,.2f}", border=1, align='R')
+            # 4. Colonna LISTINO
+            pdf.set_xy(x_start + 35 + 45 + 10, y_start)
+            pdf.cell(20, h_riga, f"{p_listino:,.2f}", border=1, align='R')
             
-            # 5. Colonna SCONTI
-            pdf.set_xy(x_start + 35 + 55 + 10 + 20, y_start)
-            pdf.cell(20, h_riga, pulisci_testo(s_str), border=1, align='C')
+            # 5. Colonna PREZZO LORDO
+            pdf.set_xy(x_start + 35 + 45 + 10 + 20, y_start)
+            pdf.cell(18, h_riga, f"{p_l:,.2f}", border=1, align='R')
             
-            # 6. Colonna NETTO UNITARIO
-            pdf.set_xy(x_start + 35 + 55 + 10 + 20 + 20, y_start)
-            pdf.cell(20, h_riga, f"{p_u:,.2f}", border=1, align='R')
+            # 6. Colonna SCONTI
+            pdf.set_xy(x_start + 35 + 45 + 10 + 20 + 18, y_start)
+            pdf.cell(16, h_riga, pulisci_testo(s_str), border=1, align='C')
             
-            # 7. Colonna TOTALE RIGA
-            pdf.set_xy(x_start + 35 + 55 + 10 + 20 + 20 + 20, y_start)
-            pdf.cell(20, h_riga, f"{(p_u * r['QTA']):,.2f}", border=1, align='R')
+            # 7. Colonna NETTO UNITARIO
+            pdf.set_xy(x_start + 35 + 45 + 10 + 20 + 18 + 16, y_start)
+            pdf.cell(18, h_riga, f"{p_u:,.2f}", border=1, align='R')
             
-            # Spostiamo definitivamente il cursore in basso per la riga successiva
+            # 8. Colonna TOTALE RIGA
+            pdf.set_xy(x_start + 35 + 45 + 10 + 20 + 18 + 16 + 18, y_start)
+            pdf.cell(18, h_riga, f"{(p_u * r['QTA']):,.2f}", border=1, align='R')
+            
             pdf.set_y(y_start + h_riga)
             
-    # Controllo finale prima di stampare il totale complessivo
     if pdf.get_y() + 15 > 270:
         pdf.add_page()
         
     pdf.ln(5); pdf.set_font("Arial", 'B', 12)
-    pdf.cell(160, 10, "TOTALE NETTO (IVA ESCLUSA)", 0, 0, 'R')
-    pdf.cell(30, 10, f"EUR {testata['totale_netto']:,.2f}", 0, 1, 'R')
+    # MODIFICATO: Ricalibrate le larghezze (140 + 40 = 180) per dare spazio all'importo del totale ed evitare sovrapposizioni
+    pdf.cell(140, 10, "TOTALE NETTO (IVA ESCLUSA) ", 0, 0, 'R')
+    pdf.cell(40, 10, f"EUR {testata['totale_netto']:,.2f}", 0, 1, 'R')
     
     return pdf.output(dest='S').encode('latin-1', errors='replace')
 
@@ -315,13 +322,10 @@ def show_archivio():
                 is_open = st.session_state.opened_expander_id == row['id']
                 
                 with st.expander(label, expanded=is_open):
-                    # Usiamo 6 colonne uguali per garantire che i bottoni abbiano lo stesso spazio
                     c1, c_edit, c_copy, c_pdf, c_ord, c_del = st.columns(6)
                     
-                    # Colonna 1: Info Riferimento
                     c1.markdown(f"**Rif:** {row['riferimento'] or '-'}")
                     
-                    # Pulsante EDIT
                     if c_edit.button("✏️ EDIT", key=f"ed_{row['id']}", use_container_width=True):
                         testata, righe = carica_preventivo(row['id'])
                         st.session_state.edit_id = row['id']
@@ -329,7 +333,6 @@ def show_archivio():
                         st.session_state.righe_archivio = righe
                         st.rerun()
 
-                    # Pulsante COPIA
                     if c_copy.button("👯 COPIA", key=f"cp_{row['id']}", use_container_width=True):
                         with st.spinner("..."):
                             res_copy = duplica_preventivo(row['id'])
@@ -340,7 +343,6 @@ def show_archivio():
                             else:
                                 st.error("Errore")
                     
-                    # Gestione PDF (Pulsante + Download link)
                     pdf_key = f"pdf_ready_{row['id']}"
                     if pdf_key not in st.session_state: st.session_state[pdf_key] = None
 
@@ -361,7 +363,6 @@ def show_archivio():
                             </div>"""
                         c_pdf.markdown(pdf_link_html, unsafe_allow_html=True)
 
-                    # Pulsante ORDINE
                     if c_ord.button("🛒 ORDINE", key=f"ord_{row['id']}", use_container_width=True):
                         st.session_state.opened_expander_id = None
                         risultato = trasforma_in_ordine(row['id'])
@@ -369,7 +370,6 @@ def show_archivio():
                             st.success("OK")
                             time.sleep(1); st.rerun()
 
-                    # Pulsante DELETE
                     if c_del.button("🗑️ DEL", key=f"del_{row['id']}", use_container_width=True, type="secondary"):
                         supabase.table("preventivi_testata").delete().eq("id", row['id']).execute()
                         st.rerun()
@@ -421,9 +421,14 @@ def show_archivio():
                     s3 = cs3.number_input("S3", value=float(item.get('S3', item.get('SCONTO3', 0.0))))
                     pn = calcola_netto(pl, s1, s2, s3)
                     if st.button("SALVA RIGA"):
-                        st.session_state.righe_archivio.append({"CODICE": item["CODICE"], "DESCRIZIONE": item["DESCRIZIONE"], "PREZZO_LORDO": pl, "PREZZO_NETTO": pn, "QTA": qta, "SCONTO_MERCE": False, "S1": s1, "S2": s2, "S3": s3, "NOTA": ""})
+                        st.session_state.righe_archivio.append({
+                            "CODICE": item["CODICE"], "DESCRIZIONE": item["DESCRIZIONE"], 
+                            "PREZZO_LISTINO": float(item.get('PREZZO_LISTINO', 0.0)),
+                            "PREZZO_LORDO": pl, "PREZZO_NETTO": pn, "QTA": qta, 
+                            "SCONTO_MERCE": False, "S1": s1, "S2": s2, "S3": s3, "NOTA": ""
+                        })
                         st.session_state.temp_item_arc = None; st.session_state.search_key_arc += 1; st.rerun()
-                if st.button("Annulla"): st.session_state.temp_item_arc = None; st.rerun()
+                if st.button("Annulla"): st.session_state.temp_item_arc = None; r.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
 
         tot_n = 0.0
@@ -443,7 +448,7 @@ def show_archivio():
         if st.button("💾 SALVA MODIFICHE", type="primary", use_container_width=True):
             upd = {"totale_netto": tot_n, "data_consegna": str(data_cons) if data_cons else None, "riferimento": rif_ordine}
             if aggiorna_preventivo_db(st.session_state.edit_id, upd, st.session_state.righe_archivio) is True:
-                st.success("Documento aggiornato!"); time.sleep(1); st.session_state.edit_id = None; st.rerun()
+                st.success("Documento updated!"); time.sleep(1); st.session_state.edit_id = None; st.rerun()
 
 if __name__ == "__main__":
     show_archivio()
