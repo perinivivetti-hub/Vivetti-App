@@ -303,8 +303,15 @@ def show_ordinato():
         for _, row in df_stats.iterrows():
             try:
                 if row.get('data_consegna'):
-                    m_idx = datetime.strptime(str(row['data_consegna']), '%Y-%m-%d').month
-                    totali[mesi_nomi_short[m_idx]] += float(row['totale_netto'])
+                    data_cons = datetime.strptime(str(row['data_consegna']), '%Y-%m-%d')
+                    
+                    # Controlliamo che l'anno della consegna corrisponda all'anno selezionato
+                    if data_cons.year == anno_sel:
+                        m_idx = data_cons.month
+                        totali[mesi_nomi_short[m_idx]] += float(row['totale_netto'])
+                    else:
+                        # Se la consegna è in un altro anno (es. 2027), lo gestiamo o lo saltiamo
+                        totali["Senza Data"] += float(row['totale_netto'])
                 else:
                     totali["Senza Data"] += float(row['totale_netto'])
             except:
