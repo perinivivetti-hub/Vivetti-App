@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client
 from datetime import datetime
-from streamlit_searchbox import st_searchbox
 import time
 
 # --- CONFIGURAZIONE PAGINA ---
@@ -26,23 +25,6 @@ def get_supabase_client():
     return create_client(url, key)
 
 supabase = get_supabase_client()
-
-# --- RICERCA CLIENTI ---
-def search_clients(search_term: str):
-    if not search_term or len(search_term) < 2:
-        return []
-    user_data = st.session_state.get('user_info', {})
-    query = supabase.table("rubrica_clienti").select("*")
-    
-    # Gli agenti vedono solo i propri clienti, l'admin vede tutto
-    if user_data.get("ruolo") == "agente":
-        ag_id = str(user_data.get("agente_corrispondente", "")).strip()
-        query = query.eq("id_agente", ag_id)
-        
-    res = query.ilike("ragione_sociale", f"%{search_term}%").limit(15).execute()
-    if not res.data: return []
-    return [(f"{row['ragione_sociale']} ({row.get('citta', '')})", row) for row in res.data]
-
 
 # --- FUNZIONI CARICAMENTO DATI ---
 def get_eventi_disponibili():
@@ -117,15 +99,12 @@ def show_eventi():
     user_data = st.session_state.get('user_info', {})
     ruolo = user_data.get("ruolo", "").lower()
     agente_id = str(user_data.get("agente_corrispondente", "")).strip()
-    
-    if "inscrizione_cliente_obj" not in st.session_state:
-        st.session_state.inscrizione_cliente_obj = None
 
     # Inizializziamo lo stato per ricordare l'evento selezionato al rerun
     if "id_evento_corrente" not in st.session_state:
         st.session_state.id_evento_corrente = None
 
-    # Reciperiamo la mappa agenti utile in più punti della pagina
+    # Recuperiamo la mappa agenti utile in più punti della pagina
     mappa_agenti = get_mappa_agenti()
 
     # ==========================================
@@ -324,17 +303,17 @@ def show_eventi():
         else:
             with st.container(border=True):
                 st.markdown("##### Inserisci i dati per la prenotazione")
-                cliente_sel = st_searchbox(search_clients, placeholder="🔍 Cerca cliente in rubrica...", key="search_cliente_evento")
-                if cliente_sel:
-                    st.session_state.inscrizione_cliente_obj = cliente_sel
                 
-                if st.session_state.inscrizione_cliente_obj:
-                    st.success(f"Cliente Selezionato: **{st.session_state.inscrizione_cliente_obj['ragione_sociale']}**")
+                # Sostituita la searchbox con un campo di testo normale
+                ragione_sociale_input = st.text_input(
+                    "Ragione Sociale Cliente", 
+                    placeholder="Es. Nome Azienda o Cliente",
+                    key="input_ragione_sociale_evento"
+                )
                 
                 # Se l'utente è Admin, mostriamo la selectbox per scegliere l'agente
                 id_agente_scelto = agente_id
                 if ruolo == "admin":
-                    # Prepariamo la lista delle opzioni: prima "ADMIN", poi l'elenco ordinato degli agenti
                     opzioni_agenti = ["ADMIN"] + sorted(list(mappa_agenti.keys()), key=lambda k: mappa_agenti[k])
                     
                     agente_selezionato_form = st.selectbox(
@@ -349,23 +328,21 @@ def show_eventi():
                 note_iscrizione = c_note.text_input("Note aggiuntive", placeholder="Es. richieste particolari...")
                 
                 if st.button("➕ CONFERMA ISCRIZIONE", type="primary", use_container_width=True):
-                    if not st.session_state.inscrizione_cliente_obj:
-                        st.error("Per favore, seleziona un cliente.")
+                    if not ragione_sociale_input.strip():
+                        st.error("Per favore, inserisci la ragione sociale del cliente.")
                     elif not nominativo.strip():
                         st.error("Il nominativo del partecipante è obbligatorio.")
                     else:
-                        cli = st.session_state.inscrizione_cliente_obj
                         nuova_prenotazione = {
                             "id_evento": evento_selezionato['id'],
                             "id_agente": id_agente_scelto,
-                            "ragione_sociale_cliente": cli['ragione_sociale'],
+                            "ragione_sociale_cliente": ragione_sociale_input.strip().upper(),
                             "nominativo_partecipante": nominativo.strip().upper(),
                             "note": note_iscrizione
                         }
                         try:
                             supabase.table("eventi_iscrizioni").insert(nuova_prenotazione).execute()
-                            st.success(f"🎉 Iscrizione di **{nominativo.strip().upper()}** confermata!")
-                            st.session_state.inscrizione_cliente_obj = None 
+                            st.success(f"🎉 Iscrizione di **{nominativo.strip().upper()}** per **{ragione_sociale_input.strip().upper()}** confermata!")
                             
                             st.session_state.id_evento_corrente = evento_selezionato['id']
                             time.sleep(1.2)
