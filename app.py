@@ -1,19 +1,32 @@
-import streamlit as st
-import pandas as pd
 import os
+import pandas as pd
+import streamlit as st
+
+# --- MONKEY PATCH PER COMPATIBILITÀ CON STREAMLIT NUOVO ---
+# Ripristina st.cache prima di importare streamlit_cookies_manager
+if not hasattr(st, "cache"):
+    st.cache = st.cache_data
+# ---------------------------------------------------------
+
 from streamlit_cookies_manager import EncryptedCookieManager
 
-# 1. CONFIGURAZIONE (Deve essere assolutamente il primo comando)
-st.set_page_config(page_title="Vivetti App", page_icon="LogoVivetti.png", layout="wide")
+# 1. CONFIGURAZIONE (Prima chiamata Streamlit)
+st.set_page_config(
+    page_title="Vivetti App", page_icon="LogoVivetti.png", layout="wide"
+)
 
 # 2. INIZIALIZZAZIONE GESTORE COOKIE
 cookies = EncryptedCookieManager(
     prefix="vivetti_app_",
-    password=st.secrets.get("cookie_password", "chiave_segreta_obbligatoria_32_caratteri_min") 
+    password=st.secrets.get(
+        "cookie_password", "chiave_segreta_obbligatoria_32_caratteri_min"
+    ),
 )
 
 if not cookies.ready():
     st.stop()  # Attende che il browser invii i cookie
+
+# Il resto del codice (dalla sezione 3 in poi) rimane identico al tuo
 
 # 3. GESTIONE LOGICA DI AUTENTICAZIONE (Cookie + Session State)
 if 'autenticato' not in st.session_state:
