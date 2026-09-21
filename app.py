@@ -77,7 +77,7 @@ ruolo = str(user_data.get("ruolo", "")).lower().strip()
 
 # 4. DEFINIZIONE DINAMICA DEL MENU IN BASE AL RUOLO
 # Lista standard completa per agenti e admin
-pagine_disponibili = ["📊 Nuovo Preventivo", "📊 Archivio Preventivi", "📦 Archivio Ordini", "📊 Performance", "🏬 Clienti", "📦 Magazzino", "🗓️ Eventi Aziendali", "📈 Nota Spese", "🗺️ Mappa"]
+pagine_disponibili = ["📊 Nuovo Preventivo", "📊 Archivio Preventivi", "📦 Archivio Ordini", "📊 Performance", "🏬 Clienti", "📦 Magazzino Occasioni", "🗓️ Eventi Aziendali", "📈 Nota Spese", "🗺️ Mappa"]
 
 if ruolo == "autista":
     # L'autista vede SOLO ed esclusivamente la nota spese
@@ -149,7 +149,7 @@ elif scelta == "🏬 Clienti":
     except Exception as e:
         st.info("La pagina 'Clienti' è in fase di sviluppo o il file non è presente.")
 
-elif scelta == "📦 Magazzino":
+elif scelta == "📦 Magazzino Occasioni":
     try:
         from views.magazzino import show_magazzino
         show_magazzino()
