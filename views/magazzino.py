@@ -11,6 +11,8 @@ def get_supabase_client():
 
 supabase = get_supabase_client()
 
+TIPOLOGIE_PRODOTTO = ["Forno", "Piano Cottura", "Frigorifero", "Cantina Vino", "Lavastoviglie", "Lavatrice", "Altro"]
+
 # --- FUNZIONI DATI & STORAGE ---
 def get_prodotti_occasione():
     res = supabase.table("magazzino_occasioni").select("*").order("created_at", desc=True).execute()
@@ -74,7 +76,9 @@ def show_magazzino():
     if puo_gestire:
         with st.expander("🛠️ Sede - Aggiungi Nuovo Prodotto in Occasione", expanded=False):
             with st.form("form_nuovo_occasione", clear_on_submit=True):
+                codice_prodotto = st.text_input("Codice Prodotto", placeholder="Es. RF-2024-001")
                 descrizione = st.text_area("Descrizione Prodotto", placeholder="Es. Frigorifero Modello X, leggero difetto estetico...")
+                tipologia = st.selectbox("Tipologia Prodotto", options=TIPOLOGIE_PRODOTTO)
                 foto_file = st.file_uploader("📸 Foto Prodotto", type=["jpg", "jpeg", "png"])
 
                 c1, c2, c3 = st.columns(3)
@@ -97,7 +101,9 @@ def show_magazzino():
 
                         if upload_valido:
                             nuovo_prodotto = {
+                                "codice_prodotto": codice_prodotto.strip() if codice_prodotto else None,
                                 "descrizione": descrizione.strip(),
+                                "tipologia_prodotto": tipologia,
                                 "foto_url": url_foto,
                                 "prezzo_listino": float(prezzo_listino),
                                 "prezzo_netto": float(prezzo_netto),
@@ -111,16 +117,21 @@ def show_magazzino():
     st.divider()
 
     # --- FILTRI DI VISUALIZZAZIONE (per tutti) ---
-    col_search, col_toggle = st.columns([3, 1])
+    col_search, col_tipo, col_toggle = st.columns([2, 1.5, 1])
     with col_search:
-        ricerca = st.text_input("🔍 Cerca per descrizione", placeholder="Digita per filtrare...")
+        ricerca = st.text_input("🔍 Cerca per codice o descrizione", placeholder="Digita per filtrare...")
+    with col_tipo:
+        tipo_sel = st.selectbox("Tipologia", options=["Tutte"] + TIPOLOGIE_PRODOTTO)
     with col_toggle:
         nascondi_esauriti = st.checkbox("Nascondi esauriti", value=False)
 
     prodotti = get_prodotti_occasione()
 
     if ricerca:
-        prodotti = [p for p in prodotti if ricerca.lower() in str(p.get('descrizione', '')).lower()]
+        r = ricerca.lower()
+        prodotti = [p for p in prodotti if r in str(p.get('descrizione', '')).lower() or r in str(p.get('codice_prodotto', '')).lower()]
+    if tipo_sel != "Tutte":
+        prodotti = [p for p in prodotti if p.get('tipologia_prodotto') == tipo_sel]
     if nascondi_esauriti:
         prodotti = [p for p in prodotti if int(p.get('quantita', 0) or 0) > 0]
 
@@ -142,7 +153,10 @@ def show_magazzino():
                     st.caption("📷 Nessuna foto")
 
             with c_info:
-                st.markdown(f"#### {p['descrizione']}")
+                titolo = f"`{p['codice_prodotto']}` — {p['descrizione']}" if p.get('codice_prodotto') else p['descrizione']
+                st.markdown(f"#### {titolo}")
+                if p.get('tipologia_prodotto'):
+                    st.caption(f"🏷️ {p['tipologia_prodotto']}")
                 c_p1, c_p2, c_p3 = st.columns(3)
                 c_p1.metric("Prezzo Listino", f"€ {float(p.get('prezzo_listino') or 0):,.2f}")
                 c_p2.metric("Prezzo Netto", f"€ {float(p.get('prezzo_netto') or 0):,.2f}")
