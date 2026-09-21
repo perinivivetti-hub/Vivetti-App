@@ -296,21 +296,24 @@ def show_ordinato():
     df_stats = pd.DataFrame(stats_res.data) if stats_res.data else pd.DataFrame()
 
     if not df_stats.empty:
-        ordine_mesi = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic', 'Senza Data']
+        ordine_mesi = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic', 'Anno Successivo', 'Senza Data']
         mesi_nomi_short = {1:'Gen', 2:'Feb', 3:'Mar', 4:'Apr', 5:'Mag', 6:'Giu', 7:'Lug', 8:'Ago', 9:'Set', 10:'Ott', 11:'Nov', 12:'Dic'}
-        
+
         totali = {m: 0.0 for m in ordine_mesi}
         for _, row in df_stats.iterrows():
             try:
                 if row.get('data_consegna'):
                     data_cons = datetime.strptime(str(row['data_consegna']), '%Y-%m-%d')
-                    
+
                     # Controlliamo che l'anno della consegna corrisponda all'anno selezionato
                     if data_cons.year == anno_sel:
                         m_idx = data_cons.month
                         totali[mesi_nomi_short[m_idx]] += float(row['totale_netto'])
+                    elif data_cons.year == anno_sel + 1:
+                        # Consegna slittata all'anno successivo
+                        totali["Anno Successivo"] += float(row['totale_netto'])
                     else:
-                        # Se la consegna è in un altro anno (es. 2027), lo gestiamo o lo saltiamo
+                        # Altri casi (anno precedente o più lontano)
                         totali["Senza Data"] += float(row['totale_netto'])
                 else:
                     totali["Senza Data"] += float(row['totale_netto'])
