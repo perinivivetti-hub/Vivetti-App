@@ -70,7 +70,7 @@ def show_magazzino():
 
     user_data = st.session_state.get('user_info', {})
     ruolo = str(user_data.get("ruolo", "")).lower().strip()
-    puo_gestire = ruolo in ["amministrazione", "admin"]
+    puo_gestire = ruolo in ["admin", "magazzino"]
 
     # --- SEZIONE SEDE: AGGIUNGI NUOVO PRODOTTO ---
     if puo_gestire:
