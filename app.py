@@ -82,9 +82,12 @@ pagine_disponibili = ["📊 Nuovo Preventivo", "📊 Archivio Preventivi", "📦
 if ruolo == "autista":
     # L'autista vede SOLO ed esclusivamente la nota spese
     pagine_disponibili = ["📈 Nota Spese"]
+elif ruolo == "magazzino":
+    # Il ruolo magazzino vede SOLO ed esclusivamente il Magazzino Occasioni
+    pagine_disponibili = ["📦 Magazzino Occasioni"]
 elif ruolo == "amministrazione":
-    # L'amministrazione vede tutto tranne la creazione di nuovi preventivi
-    pagine_disponibili = [p for p in pagine_disponibili if p != "📊 Nuovo Preventivo"]
+    # L'amministrazione vede tutto tranne la creazione di nuovi preventivi e il Magazzino Occasioni
+    pagine_disponibili = [p for p in pagine_disponibili if p not in ("📊 Nuovo Preventivo", "📦 Magazzino Occasioni")]
 
 # 5. SIDEBAR E NAVIGAZIONE
 with st.sidebar:
