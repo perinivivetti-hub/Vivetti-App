@@ -353,20 +353,34 @@ def show_ordinato():
 
     filtro_cliente_id = st_searchbox(search_clienti_ord, key="search_ord_final", placeholder="🔍 Filtra per cliente...")
 
-    query_list = supabase.table("preventivi_testata").select("*").eq("stato", "Ordine")\
-        .gte("created_at", start_y).lte("created_at", end_y).order("created_at", desc=True)
-        
-    if filtro_cliente_id: 
+    # --- PAGINAZIONE: reset pagina se cambia anno o filtro cliente ---
+    PAGE_SIZE = 20
+    filtro_key = f"{anno_sel}_{filtro_cliente_id}"
+    if 'ordini_page' not in st.session_state or st.session_state.get('ordini_filtro_key') != filtro_key:
+        st.session_state.ordini_page = 0
+        st.session_state.ordini_filtro_key = filtro_key
+
+    query_list = supabase.table("preventivi_testata").select(
+        "id, numero_preventivo, ragione_sociale_cliente, totale_netto, data_consegna, riferimento, inviato",
+        count="exact"
+    ).eq("stato", "Ordine").gte("created_at", start_y).lte("created_at", end_y).order("created_at", desc=True)
+
+    if filtro_cliente_id:
         query_list = query_list.eq("id_cliente", filtro_cliente_id)
-    if user_data.get("ruolo") == "agente": 
+    if user_data.get("ruolo") == "agente":
         query_list = query_list.eq("id_agente", str(user_data.get("agente_corrispondente")))
-    
-    res_list = query_list.execute()
+
+    start_range = st.session_state.ordini_page * PAGE_SIZE
+    end_range = start_range + PAGE_SIZE - 1
+    res_list = query_list.range(start_range, end_range).execute()
+
+    totale_ordini = res_list.count or 0
+    totale_pagine = max(1, -(-totale_ordini // PAGE_SIZE))  # ceil division
 
     if not res_list.data:
         st.warning("Nessun ordine trovato.")
     else:
-        st.write(f"Trovati **{len(res_list.data)}** ordini")
+        st.write(f"Trovati **{totale_ordini}** ordini — Pagina {st.session_state.ordini_page + 1} di {totale_pagine}")
         for row in res_list.data:
             dt_c = row['data_consegna'] if row['data_consegna'] else "NON SETTATA"
             
@@ -378,6 +392,8 @@ def show_ordinato():
             is_open = st.session_state.opened_expander_id == row['id']
             
             with st.expander(label, expanded=is_open):
+                st.markdown(f"**Riferimento:** {row['riferimento'] or '-'}")
+
                 # Usiamo le colonne per compattare priorità e checkbox inviato
                 col_prio, col_inv = st.columns([3, 1])
                 
@@ -435,6 +451,19 @@ def show_ordinato():
                     st.session_state.opened_expander_id = None
                     supabase.table("preventivi_testata").delete().eq("id", row['id']).execute()
                     st.rerun()
+
+        st.divider()
+        col_prev, col_info, col_next = st.columns([1, 2, 1])
+        with col_prev:
+            if st.button("⬅️ Precedente", disabled=st.session_state.ordini_page <= 0, use_container_width=True):
+                st.session_state.ordini_page -= 1
+                st.rerun()
+        with col_info:
+            st.markdown(f"<div style='text-align:center; padding-top:8px;'>Pagina {st.session_state.ordini_page + 1} di {totale_pagine}</div>", unsafe_allow_html=True)
+        with col_next:
+            if st.button("Successiva ➡️", disabled=st.session_state.ordini_page >= totale_pagine - 1, use_container_width=True):
+                st.session_state.ordini_page += 1
+                st.rerun()
 
 if __name__ == "__main__":
     show_ordinato()
