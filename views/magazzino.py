@@ -64,13 +64,65 @@ def elimina_prodotto(id_prodotto):
         st.error(f"Errore durante l'eliminazione: {e}")
         return False
 
+def get_mappa_agenti():
+    """Recupera la corrispondenza ID -> Nome dalla tabella 'agenti'"""
+    try:
+        res = supabase.table("agenti").select("id_agente, nome_agente").execute()
+        if res.data:
+            return {str(row['id_agente']).strip(): str(row['nome_agente']).upper() for row in res.data}
+    except Exception as e:
+        st.error(f"Errore caricamento mappa agenti: {e}")
+    return {}
+
+def get_proposte(ids_prodotti):
+    """Recupera, per i prodotti indicati, gli id_agente che li stanno proponendo a un cliente"""
+    if not ids_prodotti:
+        return {}
+    res = supabase.table("magazzino_occasioni_proposte").select("id_prodotto, id_agente").in_("id_prodotto", ids_prodotti).execute()
+    mappa = {}
+    for row in (res.data or []):
+        mappa.setdefault(row['id_prodotto'], []).append(str(row['id_agente']).strip())
+    return mappa
+
+def proponi_prodotto(id_prodotto, id_agente):
+    try:
+        supabase.table("magazzino_occasioni_proposte").insert({
+            "id_prodotto": id_prodotto, "id_agente": str(id_agente).strip()
+        }).execute()
+        return True
+    except Exception as e:
+        st.error(f"Errore durante la proposta: {e}")
+        return False
+
+def ritira_proposta(id_prodotto, id_agente):
+    try:
+        supabase.table("magazzino_occasioni_proposte").delete()\
+            .eq("id_prodotto", id_prodotto).eq("id_agente", str(id_agente).strip()).execute()
+        return True
+    except Exception as e:
+        st.error(f"Errore durante il ritiro della proposta: {e}")
+        return False
+
 # --- INTERFACCIA PRINCIPALE ---
 def show_magazzino():
     st.subheader("📦 Magazzino Occasioni")
 
     user_data = st.session_state.get('user_info', {})
     ruolo = str(user_data.get("ruolo", "")).lower().strip()
+    agente_id_corrente = str(user_data.get("agente_corrispondente", "")).strip()
     puo_gestire = ruolo in ["admin", "magazzino"]
+    puo_proporre = ruolo in ["agente", "admin"]
+
+    st.markdown("""
+        <style>
+        @keyframes blink-warning { 50% { opacity: 0.25; } }
+        .blink-warning {
+            color: #d90429; font-weight: bold; text-align: center;
+            padding: 8px 12px; border: 2px solid #d90429; border-radius: 8px;
+            margin: 8px 0; animation: blink-warning 1s linear infinite;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
     # --- SEZIONE SEDE: AGGIUNGI NUOVO PRODOTTO ---
     if puo_gestire:
@@ -141,6 +193,9 @@ def show_magazzino():
 
     st.caption(f"Prodotti trovati: {len(prodotti)}")
 
+    mappa_agenti = get_mappa_agenti()
+    mappa_proposte = get_proposte([p['id'] for p in prodotti])
+
     # --- ELENCO PRODOTTI (SCHEDE) ---
     for p in prodotti:
         with st.container(border=True):
@@ -166,6 +221,28 @@ def show_magazzino():
                     c_p3.error("ESAURITO")
                 else:
                     c_p3.metric("Disponibili", disponibili)
+
+                proposte_prodotto = mappa_proposte.get(p['id'], [])
+                if proposte_prodotto:
+                    nomi_proponenti = [mappa_agenti.get(a, f"Agente ({a})") for a in proposte_prodotto]
+                    st.caption("🤝 Proposto a un cliente da: " + ", ".join(nomi_proponenti))
+
+                if disponibili == 1 and proposte_prodotto:
+                    st.markdown(
+                        '<div class="blink-warning">⚠️ ATTENZIONE: unico pezzo disponibile, già proposto a un cliente!</div>',
+                        unsafe_allow_html=True
+                    )
+
+                if puo_proporre:
+                    gia_proposto_da_me = agente_id_corrente in proposte_prodotto
+                    if gia_proposto_da_me:
+                        if st.button("🔴 Ritira la tua proposta", key=f"ritira_{p['id']}", use_container_width=True):
+                            if ritira_proposta(p['id'], agente_id_corrente):
+                                st.rerun()
+                    else:
+                        if st.button("🤝 Sto proponendo questo prodotto a un cliente", key=f"proponi_{p['id']}", use_container_width=True):
+                            if proponi_prodotto(p['id'], agente_id_corrente):
+                                st.rerun()
 
                 if puo_gestire:
                     with st.expander("✏️ Gestisci (Sede)"):
