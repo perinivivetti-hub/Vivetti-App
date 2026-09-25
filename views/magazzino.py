@@ -78,7 +78,11 @@ def get_proposte(ids_prodotti):
     """Recupera, per i prodotti indicati, gli id_agente che li stanno proponendo a un cliente"""
     if not ids_prodotti:
         return {}
-    res = supabase.table("magazzino_occasioni_proposte").select("id_prodotto, id_agente").in_("id_prodotto", ids_prodotti).execute()
+    try:
+        res = supabase.table("magazzino_occasioni_proposte").select("id_prodotto, id_agente").in_("id_prodotto", ids_prodotti).execute()
+    except Exception as e:
+        st.error(f"Errore caricamento proposte: {e}")
+        return {}
     mappa = {}
     for row in (res.data or []):
         mappa.setdefault(row['id_prodotto'], []).append(str(row['id_agente']).strip())
@@ -121,6 +125,13 @@ def show_magazzino():
             padding: 8px 12px; border: 2px solid #d90429; border-radius: 8px;
             margin: 8px 0; animation: blink-warning 1s linear infinite;
         }
+        .occ-card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 2px; line-height: 1.3; }
+        .occ-card-tag { font-size: 0.72rem; color: #888; margin-bottom: 6px; }
+        .occ-price-row { display: flex; gap: 18px; flex-wrap: wrap; margin: 4px 0 8px 0; }
+        .occ-price-item { display: flex; flex-direction: column; }
+        .occ-price-label { font-size: 0.68rem; color: #888; }
+        .occ-price-value { font-size: 0.9rem; font-weight: 700; }
+        .occ-esaurito { color: #d90429; font-weight: 700; font-size: 0.85rem; }
         </style>
         """, unsafe_allow_html=True)
 
@@ -203,24 +214,29 @@ def show_magazzino():
 
             with c_img:
                 if p.get('foto_url'):
-                    st.image(p['foto_url'], use_container_width=True)
+                    st.image(p['foto_url'], width=110)
                 else:
                     st.caption("📷 Nessuna foto")
 
             with c_info:
-                titolo = f"`{p['codice_prodotto']}` — {p['descrizione']}" if p.get('codice_prodotto') else p['descrizione']
-                st.markdown(f"#### {titolo}")
-                if p.get('tipologia_prodotto'):
-                    st.caption(f"🏷️ {p['tipologia_prodotto']}")
-                c_p1, c_p2, c_p3 = st.columns(3)
-                c_p1.metric("Prezzo Listino", f"€ {float(p.get('prezzo_listino') or 0):,.2f}")
-                c_p2.metric("Prezzo Netto", f"€ {float(p.get('prezzo_netto') or 0):,.2f}")
+                titolo = f"<code>{p['codice_prodotto']}</code> — {p['descrizione']}" if p.get('codice_prodotto') else p['descrizione']
+                tag_html = f'<div class="occ-card-tag">🏷️ {p["tipologia_prodotto"]}</div>' if p.get('tipologia_prodotto') else ""
 
                 disponibili = int(p.get('quantita', 0) or 0)
                 if disponibili <= 0:
-                    c_p3.error("ESAURITO")
+                    disp_html = '<div class="occ-price-item"><div class="occ-price-label">Disponibili</div><div class="occ-esaurito">ESAURITO</div></div>'
                 else:
-                    c_p3.metric("Disponibili", disponibili)
+                    disp_html = f'<div class="occ-price-item"><div class="occ-price-label">Disponibili</div><div class="occ-price-value">{disponibili}</div></div>'
+
+                st.markdown(f"""
+                    <div class="occ-card-title">{titolo}</div>
+                    {tag_html}
+                    <div class="occ-price-row">
+                        <div class="occ-price-item"><div class="occ-price-label">Prezzo Listino</div><div class="occ-price-value">€ {float(p.get('prezzo_listino') or 0):,.2f}</div></div>
+                        <div class="occ-price-item"><div class="occ-price-label">Prezzo Netto</div><div class="occ-price-value">€ {float(p.get('prezzo_netto') or 0):,.2f}</div></div>
+                        {disp_html}
+                    </div>
+                    """, unsafe_allow_html=True)
 
                 proposte_prodotto = mappa_proposte.get(p['id'], [])
                 if proposte_prodotto:
