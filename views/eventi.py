@@ -277,9 +277,9 @@ def show_eventi():
                 if variazioni.get("Elimina") is True and df_iscritti.at[index, "_is_editable"]:
                     id_da_rimuovere = df_iscritti.at[index, "id_database_sicuro"]
                     nome_p = df_iscritti.at[index, "Nominativo Partecipante"]
-                    
-                    st.session_state[editor_key]["edited_rows"] = {}
-                    
+
+                    del st.session_state[editor_key]
+
                     with st.spinner(f"Rimozione iscrizione per {nome_p}..."):
                         st.session_state.id_evento_corrente = evento_selezionato['id']
                         
