@@ -15,15 +15,6 @@ def get_supabase_client():
     key = st.secrets["connections"]["supabase"]["key"]
     return create_client(url, key)
 
-@st.cache_data(ttl=600)
-def get_base_data():
-    supabase = get_supabase_client()
-    try:
-        clienti_res = supabase.table("rubrica_clienti").select("*").execute()
-        return pd.DataFrame(clienti_res.data)
-    except Exception as e:
-        return pd.DataFrame()
-
 def carica_dettagli_ordine(id_ordine):
     """Carica testata e righe solo al momento del bisogno"""
     supabase = get_supabase_client()
@@ -275,7 +266,6 @@ def show_ordinato():
     if 'opened_expander_id' not in st.session_state:
         st.session_state.opened_expander_id = None
     
-    df_clienti = get_base_data()
     user_data = st.session_state.get('user_info', {})
     supabase = get_supabase_client()
 
@@ -347,12 +337,12 @@ def show_ordinato():
     def search_clienti_ord(search_term: str):
         if not search_term or len(search_term) < 2:
             return []
-        if df_clienti.empty:
-            return []
-        mask = df_clienti['ragione_sociale'].str.contains(search_term, case=False, na=False)
+        query = supabase.table("rubrica_clienti").select("id, ragione_sociale, citta")
         if user_data.get("ruolo") == "agente":
-            mask = mask & (df_clienti["id_agente"].astype(str) == str(user_data.get("agente_corrispondente")))
-        return [(r['ragione_sociale'], r['id']) for _, r in df_clienti[mask].iterrows()]
+            query = query.eq("id_agente", str(user_data.get("agente_corrispondente")))
+        res = query.ilike("ragione_sociale", f"%{search_term}%").limit(15).execute()
+        if not res.data: return []
+        return [(f"{row['ragione_sociale']} ({row.get('citta', '')})", row['id']) for row in res.data]
 
     filtro_cliente_id = st_searchbox(search_clienti_ord, key="search_ord_final", placeholder="🔍 Filtra per cliente...")
 

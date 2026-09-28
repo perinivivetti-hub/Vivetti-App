@@ -180,11 +180,15 @@ def show_magazzino():
     st.divider()
 
     # --- FILTRI DI VISUALIZZAZIONE (per tutti) ---
-    col_search, col_tipo, col_toggle = st.columns([2, 1.5, 1])
+    col_search, col_tipo, col_ord, col_toggle = st.columns([2, 1.3, 1.7, 1])
     with col_search:
         ricerca = st.text_input("🔍 Cerca per codice o descrizione", placeholder="Digita per filtrare...")
     with col_tipo:
         tipo_sel = st.selectbox("Tipologia", options=["Tutte"] + TIPOLOGIE_PRODOTTO)
+    with col_ord:
+        ordinamento = st.selectbox("Ordina per", options=[
+            "Più recenti", "Prezzo Listino ↑", "Prezzo Listino ↓", "Prezzo Netto ↑", "Prezzo Netto ↓"
+        ])
     with col_toggle:
         nascondi_esauriti = st.checkbox("Nascondi esauriti", value=False)
 
@@ -197,6 +201,15 @@ def show_magazzino():
         prodotti = [p for p in prodotti if p.get('tipologia_prodotto') == tipo_sel]
     if nascondi_esauriti:
         prodotti = [p for p in prodotti if int(p.get('quantita', 0) or 0) > 0]
+
+    if ordinamento == "Prezzo Listino ↑":
+        prodotti = sorted(prodotti, key=lambda p: float(p.get('prezzo_listino') or 0))
+    elif ordinamento == "Prezzo Listino ↓":
+        prodotti = sorted(prodotti, key=lambda p: float(p.get('prezzo_listino') or 0), reverse=True)
+    elif ordinamento == "Prezzo Netto ↑":
+        prodotti = sorted(prodotti, key=lambda p: float(p.get('prezzo_netto') or 0))
+    elif ordinamento == "Prezzo Netto ↓":
+        prodotti = sorted(prodotti, key=lambda p: float(p.get('prezzo_netto') or 0), reverse=True)
 
     if not prodotti:
         st.info("Nessun prodotto in occasione al momento.")
