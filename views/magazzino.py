@@ -11,7 +11,10 @@ def get_supabase_client():
 
 supabase = get_supabase_client()
 
-TIPOLOGIE_PRODOTTO = ["Forno", "Piano Cottura", "Frigorifero", "Cantina Vino", "Lavastoviglie", "Lavatrice", "Altro"]
+TIPOLOGIE_PRODOTTO = [
+    "Forno", "Piano Cottura", "Frigorifero", "Cantina Vino", "Lavastoviglie", "Lavatrice",
+    "Cassetti", "Cappe", "Lavelli", "Miscelatori", "Tritarifiuti", "Altro"
+]
 
 # --- FUNZIONI DATI & STORAGE ---
 def get_prodotti_occasione():
@@ -48,12 +51,12 @@ def inserisci_prodotto(record):
         st.error(f"Errore durante l'inserimento: {e}")
         return False
 
-def aggiorna_quantita(id_prodotto, nuova_quantita):
+def aggiorna_prodotto(id_prodotto, campi):
     try:
-        supabase.table("magazzino_occasioni").update({"quantita": int(nuova_quantita)}).eq("id", id_prodotto).execute()
+        supabase.table("magazzino_occasioni").update(campi).eq("id", id_prodotto).execute()
         return True
     except Exception as e:
-        st.error(f"Errore aggiornamento quantità: {e}")
+        st.error(f"Errore durante l'aggiornamento: {e}")
         return False
 
 def elimina_prodotto(id_prodotto):
@@ -275,17 +278,53 @@ def show_magazzino():
 
                 if puo_gestire:
                     with st.expander("✏️ Gestisci (Sede)"):
-                        nuova_qta = st.number_input(
-                            "Aggiorna quantità disponibile",
-                            min_value=0, value=disponibili, key=f"qta_{p['id']}"
-                        )
-                        cb1, cb2 = st.columns(2)
-                        if cb1.button("💾 Salva Quantità", key=f"save_{p['id']}", use_container_width=True):
-                            if aggiorna_quantita(p['id'], nuova_qta):
-                                st.success("Quantità aggiornata!")
-                                time.sleep(0.8)
-                                st.rerun()
-                        if cb2.button("🗑️ Elimina Prodotto", key=f"del_{p['id']}", use_container_width=True, type="secondary"):
+                        with st.form(f"form_modifica_{p['id']}"):
+                            m_codice = st.text_input("Codice Prodotto", value=p.get('codice_prodotto') or "", key=f"m_codice_{p['id']}")
+                            m_descrizione = st.text_area("Descrizione Prodotto", value=p.get('descrizione') or "", key=f"m_desc_{p['id']}")
+
+                            tipologia_corrente = p.get('tipologia_prodotto')
+                            idx_tipo = TIPOLOGIE_PRODOTTO.index(tipologia_corrente) if tipologia_corrente in TIPOLOGIE_PRODOTTO else len(TIPOLOGIE_PRODOTTO) - 1
+                            m_tipologia = st.selectbox("Tipologia Prodotto", options=TIPOLOGIE_PRODOTTO, index=idx_tipo, key=f"m_tipo_{p['id']}")
+
+                            m_foto = st.file_uploader("📸 Sostituisci Foto (opzionale)", type=["jpg", "jpeg", "png"], key=f"m_foto_{p['id']}")
+
+                            mc1, mc2, mc3 = st.columns(3)
+                            m_listino = mc1.number_input("Prezzo Listino (€)", min_value=0.0, value=float(p.get('prezzo_listino') or 0), format="%.2f", key=f"m_listino_{p['id']}")
+                            m_netto = mc2.number_input("Prezzo Netto (€)", min_value=0.0, value=float(p.get('prezzo_netto') or 0), format="%.2f", key=f"m_netto_{p['id']}")
+                            m_qta = mc3.number_input("Quantità Disponibile", min_value=0, value=disponibili, key=f"m_qta_{p['id']}")
+
+                            cb1, cb2 = st.columns(2)
+                            salva = cb1.form_submit_button("💾 Salva Modifiche", use_container_width=True)
+                            elimina = cb2.form_submit_button("🗑️ Elimina Prodotto", use_container_width=True)
+
+                        if salva:
+                            if not m_descrizione.strip():
+                                st.error("La descrizione del prodotto è obbligatoria!")
+                            else:
+                                url_foto = p.get('foto_url')
+                                upload_valido = True
+                                if m_foto:
+                                    with st.spinner("Caricamento nuova foto..."):
+                                        nuovo_url = upload_foto_occasione(m_foto)
+                                        if nuovo_url: url_foto = nuovo_url
+                                        else: upload_valido = False
+
+                                if upload_valido:
+                                    campi_aggiornati = {
+                                        "codice_prodotto": m_codice.strip() if m_codice else None,
+                                        "descrizione": m_descrizione.strip(),
+                                        "tipologia_prodotto": m_tipologia,
+                                        "foto_url": url_foto,
+                                        "prezzo_listino": float(m_listino),
+                                        "prezzo_netto": float(m_netto),
+                                        "quantita": int(m_qta)
+                                    }
+                                    if aggiorna_prodotto(p['id'], campi_aggiornati):
+                                        st.success("Prodotto aggiornato!")
+                                        time.sleep(0.8)
+                                        st.rerun()
+
+                        if elimina:
                             if elimina_prodotto(p['id']):
                                 st.rerun()
 
