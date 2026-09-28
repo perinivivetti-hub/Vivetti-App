@@ -22,6 +22,17 @@ def carica_dettagli_ordine(id_ordine):
     righe = supabase.table("preventivi_righe").select("*").eq("id_preventivo", id_ordine).order("id").execute()
     return testata.data, righe.data
 
+def carica_dati_cliente(id_cliente):
+    """Recupera indirizzo, città e provincia del cliente per la stampa in PDF"""
+    if not id_cliente:
+        return {}
+    try:
+        supabase = get_supabase_client()
+        res = supabase.table("rubrica_clienti").select("indirizzo, citta, prov").eq("id", id_cliente).single().execute()
+        return res.data or {}
+    except Exception:
+        return {}
+
 def duplica_ordine(id_originale, supabase):
     """Copia testata e righe di un ordine esistente creandone uno nuovo come Preventivo"""
     res_t = supabase.table("preventivi_testata").select("*").eq("id", id_originale).single().execute()
@@ -67,7 +78,7 @@ def format_sconti_string(s1, s2, s3):
             continue
     return "+".join(parts) if parts else "-"
 
-def genera_pdf_conferma(cliente_ragione_sociale, testata, righe, priorita=""):
+def genera_pdf_conferma(cliente_ragione_sociale, testata, righe, priorita="", dati_cliente=None):
     # Funzione interna per sostituire i caratteri speciali con uno spazio
     def pulisci_testo(testo):
         if not testo:
@@ -102,7 +113,17 @@ def genera_pdf_conferma(cliente_ragione_sociale, testata, righe, priorita=""):
     # --- GRASSETTO: Cliente ---
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 6, pulisci_testo(f"SPETT.LE CLIENTE: {cliente_ragione_sociale}"), ln=True)
-    
+
+    # --- Indirizzo cliente (sotto al nome) ---
+    if dati_cliente:
+        indirizzo = dati_cliente.get('indirizzo')
+        citta = dati_cliente.get('citta')
+        prov = dati_cliente.get('prov')
+        riga_indirizzo = ", ".join([v for v in [indirizzo, f"{citta} ({prov})" if citta and prov else citta] if v])
+        if riga_indirizzo:
+            pdf.set_font("Arial", '', 9)
+            pdf.cell(0, 5, pulisci_testo(riga_indirizzo), ln=True)
+
     # --- GRASSETTO: Riferimento ---
     pdf.set_font("Arial", 'B', 10)
     rif_val = testata['riferimento'] if testata['riferimento'] else '-'
@@ -414,7 +435,8 @@ def show_ordinato():
                     with st.spinner("Generazione..."):
                         st.session_state.opened_expander_id = row['id']
                         t_d, r_d = carica_dettagli_ordine(row['id'])
-                        pdf_bytes = genera_pdf_conferma(row['ragione_sociale_cliente'], t_d, r_d, priorita=priorita_sel)
+                        dati_cliente = carica_dati_cliente(t_d.get('id_cliente'))
+                        pdf_bytes = genera_pdf_conferma(row['ragione_sociale_cliente'], t_d, r_d, priorita=priorita_sel, dati_cliente=dati_cliente)
                         st.session_state[pdf_key] = base64.b64encode(pdf_bytes).decode()
                         st.rerun()
 
