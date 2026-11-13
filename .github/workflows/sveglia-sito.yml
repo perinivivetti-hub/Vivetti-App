@@ -1,0 +1,39 @@
+name: Sveglia il sito Streamlit
+
+# Ogni mattina feriale, prima che arrivino i colleghi, apre il sito e lo risveglia
+# se Streamlit l'ha messo in pausa. GitHub usa l'ora UTC: le due esecuzioni coprono
+# sia l'ora legale sia l'ora solare.
+on:
+  schedule:
+    - cron: "30 4 * * 1-5"   # 06:30 ora legale / 05:30 ora solare
+    - cron: "30 5 * * 1-5"   # 07:30 ora legale / 06:30 ora solare
+  workflow_dispatch:         # permette di lanciarlo a mano dal sito di GitHub
+
+jobs:
+  sveglia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installa il browser di prova
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Sveglia il sito
+        env:
+          APP_URL: "https://vivetti.streamlit.app/"
+        run: python .github/sveglia_sito.py
+
+      - name: Salva la schermata se qualcosa non va
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: schermata-errore
+          path: sveglia_errore.png
+          if-no-files-found: ignore
