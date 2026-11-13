@@ -94,8 +94,24 @@ def aggiorna_stato_verifica(id_nota, stato):
 
 # --- INTERFACCIA UTENTE PRINCIPALE ---
 
+def _annulla_eliminazione(pending):
+    """Chiude la richiesta di conferma e toglie la spunta dalla tabella."""
+    st.session_state.pop(pending["editor_key"], None)
+    st.session_state.pop("nota_da_eliminare", None)
+
+
+def _conferma_eliminazione(pending):
+    """Elimina davvero la nota spese e riparte con la tabella pulita."""
+    if elimina_nota_spesa(pending["id"]):
+        st.session_state["nota_eliminata_ok"] = True
+    st.session_state.pop(pending["editor_key"], None)
+    st.session_state.pop("nota_da_eliminare", None)
+
+
 def show_note_spese():
     st.subheader("💰 Gestione Note Spese ")
+    if st.session_state.pop("nota_eliminata_ok", False):
+        st.success("🗑️ Spesa eliminata")
     
     user_data = st.session_state.get('user_info', {})
     ruolo = str(user_data.get("ruolo", "")).lower().strip()
@@ -212,7 +228,12 @@ def show_note_spese():
         
         # CONFIG COLONNE AGGIORNATA
         colonne_vista = ["Elimina", "Verificato", "Data", "Causale", "Importo (€)", "Note", "Allegato"]
-        if ruolo == "amministrazione": colonne_vista.insert(2, "Utente/Agente")
+        if ruolo == "amministrazione":
+            colonne_vista.insert(2, "Utente/Agente")
+            # L'amministrazione ha "Elimina" nell'ultima colonna, lontano da "Verificato",
+            # per evitare di spuntarlo al posto della verifica
+            colonne_vista.remove("Elimina")
+            colonne_vista.append("Elimina")
             
         col_config = {
             "Elimina": st.column_config.CheckboxColumn("🗑️", help="Spunta per eliminare", default=False),
@@ -237,9 +258,35 @@ def show_note_spese():
                 id_da_processare = df_spese.at[index, "id_sicuro"]
                 
                 if variazioni.get("Elimina") is True and df_spese.at[index, "_is_editable"]:
-                    if elimina_nota_spesa(id_da_processare): st.rerun()
+                    # Non si elimina subito: prima si chiede conferma (vedi sotto)
+                    st.session_state["nota_da_eliminare"] = {
+                        "id": id_da_processare,
+                        "editor_key": editor_key,
+                        "data": df_spese.at[index, "Data"],
+                        "causale": df_spese.at[index, "Causale"],
+                        "importo": df_spese.at[index, "Importo (€)"],
+                        "utente": df_spese.at[index, "Utente/Agente"],
+                    }
                 elif "Verificato" in variazioni:
                     if aggiorna_stato_verifica(id_da_processare, variazioni["Verificato"]): st.rerun()
+
+        # --- CONFERMA DI ELIMINAZIONE ---
+        pending = st.session_state.get("nota_da_eliminare")
+        if pending and pending.get("editor_key") == editor_key:
+            try:
+                importo_txt = f"€ {float(pending['importo']):.2f}"
+            except Exception:
+                importo_txt = str(pending["importo"])
+            st.warning(
+                "🗑️ **Vuoi eliminare questa spesa?**  \n"
+                f"{pending['data']} · {pending['causale']} · **{importo_txt}** · inserita da {pending['utente']}  \n"
+                "L'eliminazione non si può annullare."
+            )
+            c_si, c_no, _ = st.columns([1, 1, 4])
+            c_si.button("Sì, elimina", type="primary", key="conferma_elimina_nota",
+                        on_click=_conferma_eliminazione, args=(pending,))
+            c_no.button("Annulla", key="annulla_elimina_nota",
+                        on_click=_annulla_eliminazione, args=(pending,))
     else:
         st.info("ℹ️ Nessuna nota spesa presente.")
 
